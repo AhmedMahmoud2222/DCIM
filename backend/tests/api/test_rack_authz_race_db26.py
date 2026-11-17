@@ -148,6 +148,7 @@ async def _race(per_request_client, pause, world, victim_call):
 
 # ----------------------------------------------------------------------------------- scenarios 1-3, 6
 async def test_retire_after_concurrent_cross_site_move_is_denied_with_no_side_effects(per_request_client, pause_after_precheck, world, db_engine):
+    baseline = await _state(db_engine, world["rack"])
     resp, _ = await _race(per_request_client, pause_after_precheck, world,
                           lambda: per_request_client.post(f"{RACKS}/{world['rack']}/retire", headers=world["operator"]))
     assert resp.status_code == 404, resp.text
@@ -155,7 +156,8 @@ async def test_retire_after_concurrent_cross_site_move_is_denied_with_no_side_ef
     assert state["current_room"] == world["room_b"], "Site B placement must stay open"
     assert [p[2] for p in state["placements"]] == [False, True]
     assert "rack.unplace" not in state["audits"] and "RackUnplaced" not in state["events"]
-    assert state["audits"].count("rack.move") == 1 and state["events"].count("RackMoved") == 1  # only the authorised mover's
+    # only the authorised mover's move was recorded (rack creation already emitted one RackMoved event)
+    assert state["audits"].count("rack.move") == 1 and state["events"].count("RackMoved") == baseline["events"].count("RackMoved") + 1
 
 
 async def test_update_after_concurrent_cross_site_move_is_denied_with_no_side_effects(per_request_client, pause_after_precheck, world, db_engine):
@@ -171,13 +173,14 @@ async def test_update_after_concurrent_cross_site_move_is_denied_with_no_side_ef
 
 
 async def test_move_with_stale_visibility_cannot_relocate_a_rack_that_left_the_operators_site(per_request_client, pause_after_precheck, world, db_engine):
+    baseline = await _state(db_engine, world["rack"])
     resp, _ = await _race(per_request_client, pause_after_precheck, world,
                           lambda: per_request_client.post(f"{RACKS}/{world['rack']}/move", json={"room_id": world["room_a2"]}, headers=world["operator"]))
     assert resp.status_code == 404, resp.text
     state = await _state(db_engine, world["rack"])
     assert state["current_room"] == world["room_b"]
     assert [p[2] for p in state["placements"]] == [False, True]  # no third placement row
-    assert state["audits"].count("rack.move") == 1 and state["events"].count("RackMoved") == 1
+    assert state["audits"].count("rack.move") == 1 and state["events"].count("RackMoved") == baseline["events"].count("RackMoved") + 1
 
 
 # ------------------------------------------------------------------------------------------ scenario 4
@@ -189,7 +192,10 @@ async def test_authorised_same_site_workflows_still_work(per_request_client, wor
     mv = await per_request_client.post(f"{RACKS}/{world['rack']}/move", json={"room_id": world["room_a2"]}, headers=h)
     assert mv.status_code == 200 and mv.json()["placement"]["room_id"] == world["room_a2"]
     assert (await per_request_client.post(f"{RACKS}/{world['rack']}/retire", headers=h)).status_code == 200
-    again = await per_request_client.post(f"{RACKS}/{world['rack']}/retire", headers=h)  # retry stays idempotent
+    # An unplaced rack has no site, so it is invisible to a restricted operator: their retry is a 404 (unchanged
+    # semantics). The idempotent no-op success belongs to the unrestricted caller.
+    assert (await per_request_client.post(f"{RACKS}/{world['rack']}/retire", headers=h)).status_code == 404
+    again = await per_request_client.post(f"{RACKS}/{world['rack']}/retire", headers=world["admin"])
     assert again.status_code == 200 and again.json()["placement"] is None
     state = await _state(db_engine, world["rack"])
     assert state["audits"].count("rack.unplace") == 1 and state["events"].count("RackUnplaced") == 1
@@ -221,13 +227,14 @@ async def test_reverse_ordering_victim_blocks_on_the_mover_then_fails_closed(per
 
 
 async def test_same_site_overlap_serialises_without_deadlock_and_stale_tokens_conflict(per_request_client, world, db_engine):
-    """Two operators race a rename and a retire on the same rack: both finish (no deadlock), stale If-Match is 409."""
+    """Two renames with the same If-Match plus a same-site move race on one rack: all finish (no deadlock, so no
+    wait_for timeout), exactly one rename wins and the other gets the stale-token 409."""
     h = world["operator"]
     version = (await per_request_client.get(f"{RACKS}/{world['rack']}", headers=h)).json()["version"]
     results = await asyncio.wait_for(asyncio.gather(
         per_request_client.patch(f"{RACKS}/{world['rack']}", json={"name": "one"}, headers={**h, "If-Match": str(version)}),
         per_request_client.patch(f"{RACKS}/{world['rack']}", json={"name": "two"}, headers={**h, "If-Match": str(version)}),
-        per_request_client.post(f"{RACKS}/{world['rack']}/retire", headers=h),
+        per_request_client.post(f"{RACKS}/{world['rack']}/move", json={"room_id": world["room_a2"]}, headers=h),
     ), BLOCK_TIMEOUT_S)
     assert sorted(r.status_code for r in results[:2]) == [200, 409]
     assert results[2].status_code == 200
