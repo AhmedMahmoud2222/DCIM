@@ -43,6 +43,7 @@ from app.application.placement_service import (
     get_current_rack_placement,
     lock_rack_placement_and_recheck_scope,
     move_rack,
+    observe_rack_placement,
     retire_rack_placement,
 )
 from app.application.rbac import require_permission
@@ -380,7 +381,10 @@ async def move_rack_endpoint(
     validate_rotation_degrees(body.rotation_deg)
 
     await ensure_rack_access(db, ctx.scope, rack_id)
-    await lock_rack_placement_and_recheck_scope(db, ctx.scope, rack_id)  # DB-26 (#360)
+    # DB-26 (#360): observe BEFORE waiting for the placement locks, so a move that commits while we wait still
+    # surfaces as the established 409 (move_rack compares against this observation), not a silent overwrite.
+    observed = await observe_rack_placement(db, rack_id)
+    await lock_rack_placement_and_recheck_scope(db, ctx.scope, rack_id)
     await ensure_room_access(db, ctx.scope, body.room_id)
     rack = await db.get(Rack, rack_id)
     if rack is None:
@@ -394,7 +398,7 @@ async def move_rack_endpoint(
     try:
         await move_rack(
             db, rack_id=rack_id, room_id=body.room_id, x_mm=body.x_mm, y_mm=body.y_mm, rotation_deg=body.rotation_deg,
-            if_match_version=if_match_version,
+            if_match_version=if_match_version, observed=observed,
         )
     except PlacementConflict as exc:
         # Read the conflicting row's fields *before* rolling back — Session.rollback()

@@ -41,6 +41,18 @@ async def _lock_asset_placement(db: AsyncSession, kind: str, asset_id: uuid.UUID
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": key})
 
 
+@dataclass(frozen=True)
+class ObservedPlacement:
+    """The current rack placement (or None = unplaced) a caller based its decision on, read BEFORE any lock wait.
+
+    `move_rack` compares it with the placement it finds once it holds the lock and raises `PlacementConflict`
+    if another writer replaced it meanwhile (409), even when the caller sent no If-Match. Callers that take the
+    placement locks themselves first (see `lock_rack_placement_and_recheck_scope`) must pass the observation
+    they made before that wait, otherwise the wait would hide the concurrent change."""
+
+    placement: "RackPlacement | None"
+
+
 @dataclass
 class PlacementConflict(Exception):
     """Raised when the row this caller expected to be current is no longer current —
@@ -99,6 +111,10 @@ async def get_current_rack_placement(db: AsyncSession, rack_id: uuid.UUID) -> Ra
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
+async def observe_rack_placement(db: AsyncSession, rack_id: uuid.UUID) -> ObservedPlacement:
+    return ObservedPlacement(await get_current_rack_placement(db, rack_id))
+
+
 async def move_rack(
     db: AsyncSession,
     *,
@@ -108,6 +124,7 @@ async def move_rack(
     y_mm: int | None = None,
     rotation_deg: int | None = None,
     if_match_version: int | None = None,
+    observed: ObservedPlacement | None = None,
 ) -> RackPlacement:
     """Opens the first placement if none exists yet; otherwise closes the current one and
     opens a new one, atomically. Raises PlacementConflict if `if_match_version` is given
@@ -118,10 +135,12 @@ async def move_rack(
     sits in is part of every site-restricted user's data scope, so this write must not commit
     while a delegated-administration decision that read the old placement is still open."""
     await acquire_placement_scope_lock(db)
-    observed = await get_current_rack_placement(db, rack_id)  # what this caller decided to change, read BEFORE any wait
+    # What this caller decided to change, read BEFORE any wait. A caller that already waited for the locks (the
+    # scope re-check) supplies the observation it made earlier; reading it here would hide a concurrent move.
+    seen = observed.placement if observed is not None else await get_current_rack_placement(db, rack_id)
     await _lock_asset_placement(db, "rack", rack_id)
     current = await get_current_rack_placement(db, rack_id)
-    _require_unchanged_while_waiting(observed, current)
+    _require_unchanged_while_waiting(seen, current)
     if current is None and if_match_version is not None:
         # A token can only describe a placement that exists. Unplaced + a token means the token comes from an earlier
         # generation (or never existed): it must not be honoured, whatever number it carries.

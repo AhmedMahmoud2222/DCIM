@@ -20,6 +20,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.api.deps import get_db
+from app.api.v1 import floor_plans as floor_plans_module
+from app.api.v1 import managed_assets as managed_assets_module
 from app.api.v1 import racks as racks_module
 from app.application.placement_service import move_rack
 from app.main import app
@@ -59,23 +61,25 @@ async def world(client, auth_headers):
     room_a2 = (
         await client.post("/api/v1/rooms", json={"floor_id": site_a["floor"], "code": f"R2-{uuid.uuid4().hex[:4]}", "name": "A2"}, headers=admin)
     ).json()["id"]
+    room_a3 = (
+        await client.post("/api/v1/rooms", json={"floor_id": site_a["floor"], "code": f"R3-{uuid.uuid4().hex[:4]}", "name": "A3"}, headers=admin)
+    ).json()["id"]
     rack = await _make_rack(client, admin, auth_headers, site_a["room"])
     group = await _group(
         client, admin, allow=["rack:read", "rack:manage", "rack:place"],
         sites=[{"site_id": site_a["site"], "rack_scope": "all", "rack_ids": []}],
     )
     _, operator = await _group_user(client, admin, [group])
-    return {"admin": admin, "operator": operator, "rack": rack, "room_a": site_a["room"], "room_a2": room_a2,
+    return {"admin": admin, "operator": operator, "rack": rack, "room_a": site_a["room"], "room_a2": room_a2, "room_a3": room_a3,
             "room_b": site_b["room"], "site_a": site_a, "site_b": site_b}
 
 
-@pytest.fixture
-def pause_after_precheck(monkeypatch):
-    """Parks the first RESTRICTED caller of racks.ensure_rack_access right after its check returns.
+def _install_pause(monkeypatch, module):
+    """Parks the first RESTRICTED caller of `module.ensure_rack_access` right after its check returns.
 
     The pause is before any lock is taken, which is the exact check-versus-lock window of DB-26. Unrestricted
     callers (the admin mover) and later calls pass straight through."""
-    original = racks_module.ensure_rack_access
+    original = module.ensure_rack_access
     reached, release, used = asyncio.Event(), asyncio.Event(), []
 
     async def _wrapped(db, scope, rack_id):
@@ -85,8 +89,13 @@ def pause_after_precheck(monkeypatch):
             reached.set()
             await asyncio.wait_for(release.wait(), BLOCK_TIMEOUT_S * 2)
 
-    monkeypatch.setattr(racks_module, "ensure_rack_access", _wrapped)
+    monkeypatch.setattr(module, "ensure_rack_access", _wrapped)
     return reached, release
+
+
+@pytest.fixture
+def pause_after_precheck(monkeypatch):
+    return _install_pause(monkeypatch, racks_module)
 
 
 # ----------------------------------------------------------------------------------------------- helpers
@@ -232,3 +241,186 @@ async def test_placement_aba_stale_if_match_cannot_move_a_replaced_rack(per_requ
     stale = await per_request_client.post(f"{RACKS}/{world['rack']}/move", json={"room_id": world["room_a2"]},
                                           headers={**h, "If-Match": str(first)})
     assert stale.status_code == 409, stale.text
+
+
+# ------------------------------------------------------------- stale observations (AGY P2: observe before the wait)
+async def test_same_site_competing_moves_without_if_match_still_conflict(per_request_client, world, db_engine):
+    """The first mover holds the placement locks uncommitted; the restricted second mover (no If-Match) must wait,
+    then get the established 409, never silently overwrite the first move."""
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as holder:
+        await move_rack(holder, rack_id=uuid.UUID(world["rack"]), room_id=uuid.UUID(world["room_a2"]))
+        victim = asyncio.create_task(per_request_client.post(
+            f"{RACKS}/{world['rack']}/move", json={"room_id": world["room_a3"]}, headers=world["operator"]))
+        await _wait_until_blocked(db_engine)
+        assert not victim.done()
+        await holder.commit()
+    resp = await asyncio.wait_for(victim, BLOCK_TIMEOUT_S)
+    assert resp.status_code == 409, resp.text
+    state = await _state(db_engine, world["rack"])
+    assert state["current_room"] == world["room_a2"], "the first move must survive"
+    assert state["audits"].count("rack.move") == 0  # the holder bypassed the API; the loser wrote nothing
+
+
+async def test_concurrent_first_placement_conflicts_for_the_second_placer(per_request_client, auth_headers, client, world, db_engine):
+    """Unplaced rack: two placements race; the second (unrestricted admin, no If-Match) gets 409, not an overwrite."""
+    from tests.api._phase2_helpers import create_rack
+
+    loose = (await create_rack(client, world["admin"], auth_headers, name="Loose"))["id"]  # no room -> unplaced
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as holder:
+        await move_rack(holder, rack_id=uuid.UUID(loose), room_id=uuid.UUID(world["room_a"]))
+        victim = asyncio.create_task(per_request_client.post(
+            f"{RACKS}/{loose}/move", json={"room_id": world["room_a2"]}, headers=world["admin"]))
+        await _wait_until_blocked(db_engine)
+        await holder.commit()
+    assert (await asyncio.wait_for(victim, BLOCK_TIMEOUT_S)).status_code == 409
+    assert (await _state(db_engine, loose))["current_room"] == world["room_a"]
+
+
+# ------------------------------------------------- #163 per-permission union and rack_scope="selected" (scenario 3)
+async def _retire_race_denied(per_request_client, pause, world, headers, db_engine):
+    resp, _ = await _race(per_request_client, pause, world,
+                          lambda: per_request_client.post(f"{RACKS}/{world['rack']}/retire", headers=headers))
+    assert resp.status_code == 404, resp.text
+    state = await _state(db_engine, world["rack"])
+    assert state["current_room"] == world["room_b"] and "rack.unplace" not in state["audits"]
+
+
+async def test_per_permission_scopes_rack_read_on_both_sites_does_not_authorise_rack_place(
+    per_request_client, client, pause_after_precheck, world, db_engine
+):
+    """#163: rack:read covers sites A+B, rack:place only A. After the rack moves to B the user still READS it, but
+    the stale rack:place decision must not retire it."""
+    reader = await _group(client, world["admin"], allow=["rack:read"], sites=[
+        {"site_id": world["site_a"]["site"], "rack_scope": "all", "rack_ids": []},
+        {"site_id": world["site_b"]["site"], "rack_scope": "all", "rack_ids": []}])
+    placer = await _group(client, world["admin"], allow=["rack:place"], sites=[
+        {"site_id": world["site_a"]["site"], "rack_scope": "all", "rack_ids": []}])
+    _, headers = await _group_user(client, world["admin"], [reader, placer])
+    await _retire_race_denied(per_request_client, pause_after_precheck, world, headers, db_engine)
+    assert (await per_request_client.get(f"{RACKS}/{world['rack']}", headers=headers)).status_code == 200
+
+
+async def test_selected_rack_scope_grant_goes_stale_when_the_rack_moves_site(
+    per_request_client, client, pause_after_precheck, world, db_engine
+):
+    group = await _group(client, world["admin"], allow=["rack:read", "rack:manage", "rack:place"], sites=[
+        {"site_id": world["site_a"]["site"], "rack_scope": "selected", "rack_ids": [world["rack"]]}])
+    _, headers = await _group_user(client, world["admin"], [group])
+    assert (await per_request_client.get(f"{RACKS}/{world['rack']}", headers=headers)).status_code == 200
+    await _retire_race_denied(per_request_client, pause_after_precheck, world, headers, db_engine)
+
+
+# ------------------------------------------------------------------------ managed-asset lifecycle (AGY P2)
+def _lifecycle_scope_aware(monkeypatch):
+    import app.application.access_control as access_control
+
+    monkeypatch.setattr(access_control, "SCOPE_AWARE_PERMISSIONS",
+                        access_control.SCOPE_AWARE_PERMISSIONS | {"managed_asset:read", "managed_asset:update_lifecycle"})
+
+
+async def _lifecycle_operator(client, world):
+    group = await _group(client, world["admin"], allow=["managed_asset:read", "managed_asset:update_lifecycle", "rack:read"], sites=[
+        {"site_id": world["site_a"]["site"], "rack_scope": "all", "rack_ids": []}])
+    _, headers = await _group_user(client, world["admin"], [group])
+    return headers
+
+
+async def test_rack_lifecycle_transition_after_concurrent_cross_site_move_is_denied(
+    per_request_client, client, monkeypatch, world, db_engine
+):
+    _lifecycle_scope_aware(monkeypatch)
+    headers = await _lifecycle_operator(client, world)
+    pause = _install_pause(monkeypatch, managed_assets_module)
+    resp, _ = await _race(per_request_client, pause, world,
+                          lambda: per_request_client.post(f"/api/v1/managed-assets/{world['rack']}/lifecycle-transition",
+                                                          json={"to_status": "installed"}, headers=headers))
+    assert resp.status_code == 404, resp.text
+    rack = uuid.UUID(world["rack"])
+    async with db_engine.connect() as conn:
+        status = (await conn.execute(text("SELECT lifecycle_status FROM managed_asset WHERE id = :r"), {"r": rack})).scalar_one()
+        audits = (await conn.execute(text("SELECT count(*) FROM audit_log WHERE entity_id = :r AND action LIKE '%lifecycle%'"), {"r": rack})).scalar_one()
+        events = (await conn.execute(text("SELECT count(*) FROM outbox_event WHERE aggregate_id = :r AND event_type LIKE '%Lifecycle%'"), {"r": rack})).scalar_one()
+    assert (status, audits, events) == ("planned", 0, 0)
+
+
+async def test_rack_lifecycle_transition_still_works_in_scope(per_request_client, client, monkeypatch, world):
+    _lifecycle_scope_aware(monkeypatch)
+    headers = await _lifecycle_operator(client, world)
+    ok = await per_request_client.post(f"/api/v1/managed-assets/{world['rack']}/lifecycle-transition", json={"to_status": "installed"}, headers=headers)
+    assert ok.status_code == 200 and ok.json()["lifecycle_status"] == "installed"
+
+
+# ------------------------------------------------------------------ floor-plan candidate accept (AGY P2 / P3)
+from app.application.catalog_documents.extraction.sandbox import landlock_available  # noqa: E402
+
+needs_parser = pytest.mark.skipif(not landlock_available(), reason="Landlock is required for the parser sandbox")
+
+
+async def _accept_world(client, world, db_session):
+    """A rack placed in room A with an imported, calibrated floor plan, plus an operator who holds floor_plan:manage
+    through a GLOBAL role (that permission is not site-aware) but rack:place only for Site A through a group."""
+    from sqlalchemy import select
+
+    from app.domain.auth.models import Permission, Role, RoleAssignment, RolePermission
+    from tests import spatial_fixtures as fx
+    from tests.api._spatial_helpers import calibrate_declared, candidates, import_file, new_floor_plan
+
+    admin = world["admin"]
+    plan = await new_floor_plan(client, admin, world["room_a"])
+    job = await import_file(client, admin, plan["id"], fx.rack_row_dxf(2), "r.dxf", "dxf")
+    await calibrate_declared(client, admin, plan["id"], job["id"])
+    cand = (await candidates(client, admin, job["id"]))[0]
+    group = await _group(client, admin, allow=["rack:read", "rack:place"], sites=[
+        {"site_id": world["site_a"]["site"], "rack_scope": "all", "rack_ids": []}])
+    user, headers = await _group_user(client, admin, [group])
+    role = Role(name=f"fp-manage-{uuid.uuid4().hex[:6]}", is_system=False)
+    db_session.add(role)
+    await db_session.flush()
+    for code in ("floor_plan:read", "floor_plan:manage"):
+        resource, action = code.split(":")
+        perm = (await db_session.execute(select(Permission).where(Permission.resource == resource, Permission.action == action))).scalar_one()
+        db_session.add(RolePermission(role_id=role.id, permission_id=perm.id))
+    db_session.add(RoleAssignment(id=uuid.uuid4(), user_id=uuid.UUID(user["id"]), role_id=role.id, scope_type="global"))
+    await db_session.commit()
+    return {"headers": headers, "job": job, "cand": cand}
+
+
+@needs_parser
+async def test_accept_apply_position_after_concurrent_cross_site_move_is_denied(
+    per_request_client, client, db_session, monkeypatch, world, db_engine
+):
+    a = await _accept_world(client, world, db_session)
+    version = (await client.get(f"{RACKS}/{world['rack']}", headers=world["admin"])).json()["placement"]["version"]
+    pause = _install_pause(monkeypatch, floor_plans_module)
+    body = {"object_type": "rack", "matched_asset_id": world["rack"], "apply_position": True, "placement_version": version}
+    resp, _ = await _race(per_request_client, pause, world, lambda: per_request_client.post(
+        f"/api/v1/floor-plans/import-jobs/{a['job']['id']}/candidates/{a['cand']['id']}/accept",
+        json=body, headers={**a["headers"], "If-Match": str(a["cand"]["version"])}))
+    assert resp.status_code == 404, resp.text
+    state = await _state(db_engine, world["rack"])
+    assert state["current_room"] == world["room_b"] and state["audits"].count("rack.move") == 1
+    async with db_engine.connect() as conn:
+        status = (await conn.execute(text("SELECT status FROM floor_plan_import_candidate WHERE id = :c"), {"c": uuid.UUID(a["cand"]["id"])})).scalar_one()
+    assert status != "accepted"
+
+
+@needs_parser
+async def test_accept_apply_position_on_an_unplaced_rack_conflicts_with_a_concurrent_placement(
+    per_request_client, client, auth_headers, db_session, world, db_engine
+):
+    from tests.api._phase2_helpers import create_rack
+
+    a = await _accept_world(client, world, db_session)
+    loose = (await create_rack(client, world["admin"], auth_headers, name="Loose"))["id"]
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as holder:
+        await move_rack(holder, rack_id=uuid.UUID(loose), room_id=uuid.UUID(world["room_a"]))
+        victim = asyncio.create_task(per_request_client.post(
+            f"/api/v1/floor-plans/import-jobs/{a['job']['id']}/candidates/{a['cand']['id']}/accept",
+            json={"object_type": "rack", "matched_asset_id": loose, "apply_position": True},
+            headers={**world["admin"], "If-Match": str(a["cand"]["version"])}))
+        await _wait_until_blocked(db_engine)
+        await holder.commit()
+    assert (await asyncio.wait_for(victim, BLOCK_TIMEOUT_S)).status_code == 409

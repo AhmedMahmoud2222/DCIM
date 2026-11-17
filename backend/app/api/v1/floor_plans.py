@@ -24,6 +24,7 @@ from app.application.audit_service import write_audit_log
 from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.outbox_service import write_outbox_event
 from app.application.placement_service import (
+    ObservedPlacement,
     PlacementConflict,
     get_current_equipment_placement,
     get_current_rack_placement,
@@ -1136,6 +1137,7 @@ async def accept_import_candidate(
                 new_placement = await move_rack(
                     db, rack_id=rack.id, room_id=floor_plan.room_id, x_mm=canonical["x_mm"], y_mm=canonical["y_mm"],
                     rotation_deg=canonical["rotation_deg"], if_match_version=body.placement_version,
+                    observed=ObservedPlacement(placement),  # the placement this decision was based on (read above, before any wait)
                 )
             except PlacementConflict as exc:
                 await db.rollback()
