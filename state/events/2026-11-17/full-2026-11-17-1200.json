@@ -1,0 +1,22 @@
+{
+  "run_id": "full-2026-11-17-1200",
+  "mode": "FULL",
+  "time_utc": "2026-11-17T08:00:30Z",
+  "steps": {
+    "0": "Lease acquired; policy and changelog read; no unauthorized policy drift detected against prior content",
+    "1": "0 open PRs; 13 open issues; main 88641e6314b017464e6a1424feee85be4b5de02b",
+    "2": "Issue #357 independent Codex review identifies DB-28 P1 candidate; no runtime exploit verified",
+    "3": "Security audit #357 prioritized; no PR eligible",
+    "4": "No open PR review threads",
+    "5": "No PR action; owner audit #357 ongoing",
+    "6": "No historical open PRs",
+    "7": "No pending PR agent asks",
+    "8": "No merge candidates",
+    "9": "No new class I decision issued",
+    "10": "Report completed; Migration 0057 production hold retained",
+    "4a": "No PR findings checklist to update"
+  },
+  "merged": [],
+  "ruleset": "23651422; strict backend/frontend; six bypass actors all pull_request",
+  "notable": "#357 Codex disputes initial audit severity; DB-28 P1 candidate, DB-26 P2, retention DB-47 dependency; no implementation authorized"
+}
