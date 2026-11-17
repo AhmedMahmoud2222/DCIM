@@ -42,3 +42,19 @@ def test_template_placeholders_all_filled():
     pr = {'number': 5, 'title': 't', 'body': 'b', 'head': {'sha': 'h' * 40}, 'base': {'sha': 'b' * 40}}
     out = agy.build_prompt(tpl, 'o/r', pr, [{'number': 4, 'title': 'i', 'body': 'x'}], [], [], '', '/tmp/d')
     assert '{{' not in out and 'h' * 40 in out and 'Verdict: Accepted' in out
+
+
+def test_runner_passes_prompt_as_single_argv_without_shell_evaluation(tmp_path):
+    import os
+    import subprocess
+    fake = tmp_path / 'agy'
+    fake.write_text('#!/usr/bin/env bash\nprintf "%s" "$2" > "$OUT"\n[ "$1" = "-p" ] && [ "$#" = 2 ]\n')
+    fake.chmod(0o755)
+    prompt = tmp_path / 'prompt.txt'
+    evil = 'x; touch PWNED; $(touch PWNED2) `touch PWNED3` "quote" \'single\''
+    prompt.write_text(evil)
+    env = dict(os.environ, PATH=f'{tmp_path}:{os.environ["PATH"]}', AGY_PROMPT_FILE=str(prompt), OUT=str(tmp_path / 'out'))
+    runner = _p.parent / 'agy_run.sh'
+    subprocess.run([str(runner)], cwd=tmp_path, env=env, check=True)
+    assert (tmp_path / 'out').read_text() == evil
+    assert not list(tmp_path.glob('PWNED*'))

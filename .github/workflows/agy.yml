@@ -129,7 +129,7 @@ jobs:
           mkdir -p "${HOME}/.gemini/antigravity-cli"
           echo '{ "modelProvider": "gemini" }' > "${HOME}/.gemini/antigravity-cli/settings.json"
           # agy -p prints nothing without a TTY (upstream bug #76), so run it under a pseudo-terminal.
-          script -qec "agy -p \"\$(cat '${RUNNER_TEMP}/prompt.txt')\"" /dev/null > "${RUNNER_TEMP}/raw.txt"
+          AGY_PROMPT_FILE="${RUNNER_TEMP}/prompt.txt" script -qec .github/scripts/agy_run.sh /dev/null > "${RUNNER_TEMP}/raw.txt"
           tr -d '\r' < "${RUNNER_TEMP}/raw.txt" > "${RUNNER_TEMP}/review.md"
           test -s "${RUNNER_TEMP}/review.md" || { echo "::error::agy returned no output"; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
