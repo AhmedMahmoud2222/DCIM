@@ -1,0 +1,58 @@
+{
+  "run_id": "full-2026-11-17-1557",
+  "mode": "FULL",
+  "started_at": "2026-11-17T11:57:34Z",
+  "main": "88641e6314b017464e6a1424feee85be4b5de02b",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy and changelog read; ruleset verified, no always bypass"
+    },
+    {
+      "step": 1,
+      "result": "0 open PRs; 14 open issues; main unchanged"
+    },
+    {
+      "step": 2,
+      "result": "Reviewed #358 design re-review; no live DB evidence or execution approval"
+    },
+    {
+      "step": 3,
+      "result": "Priority #358 planning; #214 staging hold; #338 closure verification"
+    },
+    {
+      "step": 4,
+      "result": "No open PR threads"
+    },
+    {
+      "step": "4a",
+      "result": "No PR findings to disposition"
+    },
+    {
+      "step": 5,
+      "result": "No PR actions eligible; #358 planning-only"
+    },
+    {
+      "step": 6,
+      "result": "No open supersession candidates"
+    },
+    {
+      "step": 7,
+      "result": "No new agent requests or stale PR asks"
+    },
+    {
+      "step": 8,
+      "result": "No merge candidates; 0 open PRs"
+    },
+    {
+      "step": 9,
+      "result": "No new class I approval; #358 execution remains unauthorized"
+    },
+    {
+      "step": 10,
+      "result": "Report prepared; migration 0057 production hold intact"
+    }
+  ],
+  "merges": [],
+  "production_actions": []
+}
