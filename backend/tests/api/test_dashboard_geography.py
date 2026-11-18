@@ -125,3 +125,54 @@ async def test_site_list_is_bounded_while_totals_stay_exact(client, admin, db_se
     assert len(body["sites"]) == dashboard.MAX_GEOGRAPHY_SITES and body["sites_truncated"] is True
     assert [s["code"] for s in body["sites"]] == [code for code, _, _ in sites[: dashboard.MAX_GEOGRAPHY_SITES]]
     assert [c["site_count"] for c in body["cities"]] == [1000, dashboard.MAX_GEOGRAPHY_SITES + 5 - 1000]
+
+
+async def _scoped_ids(client, headers, path):
+    response = await client.get(f"/api/v1/{path}", headers=headers, params={"limit": 200})
+    assert response.status_code == 200, (path, response.text)
+    return {item["id"] for item in response.json()["items"]}
+
+
+@pytest.mark.parametrize("grants", ["all", "selected_without_racks", "none"])
+async def test_geography_reaches_exactly_the_entities_the_existing_scoped_location_routes_reach(
+    client, admin, db_session, grants
+):
+    """Independent authorization check for the scope-aware route inventory (test_user_groups_authz): whatever
+    scope a caller holds, geography must expose the same sites, cities and countries as GET /sites, /cities and
+    /countries, which are already reviewed. It may add coordinates for those sites, never another entity."""
+    ids = await _world(db_session, {
+        "OrgA": {"Egypt": {"Cairo": [("A-1", 30, 31), ("A-2", 30.1, 31.1)], "Alexandria": [("A-3", 31.2, 29.9)]}},
+        "OrgB": {"France": {"Paris": [("B-1", 48.8, 2.3)]}},
+    })
+    sites = {
+        "all": [{"site_id": str(ids["A-1"]), "rack_scope": "all"}, {"site_id": str(ids["B-1"]), "rack_scope": "all"}],
+        "selected_without_racks": [{"site_id": str(ids["A-2"]), "rack_scope": "selected", "rack_ids": []}],
+        "none": [],
+    }[grants]
+    gid = await _group(client, admin, allow=["location:read"], sites=sites)
+    _, headers = await _group_user(client, admin, [gid])
+
+    geography = (await client.get(URL, headers=headers)).json()
+    assert {s["id"] for s in geography["sites"]} == await _scoped_ids(client, headers, "sites")
+    assert {c["id"] for c in geography["cities"]} == await _scoped_ids(client, headers, "cities")
+    assert {c["id"] for c in geography["countries"]} == await _scoped_ids(client, headers, "countries")
+    assert geography["totals"]["sites"] == len(geography["sites"])
+    assert geography["totals"]["cities"] == len(geography["cities"])
+    assert geography["totals"]["countries"] == len(geography["countries"])
+    # Per-city and per-country counts are over the caller's own sites only.
+    by_city: dict[str, int] = {}
+    for site in geography["sites"]:
+        by_city[site["city_id"]] = by_city.get(site["city_id"], 0) + 1
+    assert {c["id"]: c["site_count"] for c in geography["cities"]} == by_city
+    if grants == "none":
+        assert geography["totals"] == {
+            "countries": 0, "cities": 0, "sites": 0, "sites_with_coordinates": 0, "sites_without_coordinates": 0,
+        }
+
+
+async def test_geography_denied_when_another_group_denies_location_read(client, admin, db_session):
+    ids = await _world(db_session, {"Org": {"Egypt": {"Cairo": [("D-1", 1, 1)]}}})
+    granting = await _group(client, admin, allow=["location:read"], sites=[{"site_id": str(ids["D-1"]), "rack_scope": "all"}])
+    denying = await _group(client, admin, deny=["location:read"])
+    _, headers = await _group_user(client, admin, [granting, denying])
+    assert (await client.get(URL, headers=headers)).status_code == 403

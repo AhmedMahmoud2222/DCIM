@@ -397,6 +397,10 @@ REVIEWED_SCOPE_AWARE_ROUTES = {
     ("equipment", "GET", "/equipment/{equipment_id}"),
     ("equipment", "GET", "/equipment/{equipment_id}/ports"),
     ("locations", "GET", "/buildings"),
+    # Issue #365: location:read is scope-aware. Every count, name and coordinate is taken over the caller's visible
+    # sites (site/city/country visible clauses); tests/api/test_dashboard_geography.py proves it reaches exactly the
+    # entities GET /sites, /cities and /countries reach, for full, selected-rack and no-grant scopes.
+    ("dashboard", "GET", "/dashboard/geography"),
     ("locations", "GET", "/cities"),
     ("locations", "GET", "/countries"),
     ("locations", "GET", "/floors"),

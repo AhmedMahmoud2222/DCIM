@@ -28,7 +28,9 @@ const overview = (items: unknown[], extra: Partial<AlarmOverview> = {}): AlarmOv
 
 const seven = Array.from({ length: 7 }, (_, i) => alarm(`a${i}`));
 const panel = () => document.querySelector('[data-section="alarms"]') as HTMLElement;
-const counter = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}\\s*\\d+$`) });
+/** Counter buttons are named "<Severity> <count>". A name function, not a RegExp built from a string. */
+const counter = (name: string) =>
+  screen.getByRole("button", { name: (accessibleName) => accessibleName.startsWith(name) && /^\s*\d+$/.test(accessibleName.slice(name.length)) });
 const lastCall = () => vi.mocked(getAlarmOverview).mock.lastCall?.[0];
 
 beforeEach(() => {

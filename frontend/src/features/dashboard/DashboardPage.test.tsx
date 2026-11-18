@@ -300,13 +300,16 @@ const SOURCES = [
   { id: "inventory", what: "the infrastructure inventory summary", permission: "dashboard:read", user: userWith("alarm:read", "collector:read", "location:read"), empty: "The API returned no inventory summary." },
 ] as const;
 
-const SOURCE_FN = {
-  alarms: () => vi.mocked(getAlarmOverview),
-  geography: () => vi.mocked(getGeography),
-  exceptions: () => vi.mocked(getDashboardExceptions),
-  collectors: () => vi.mocked(listCollectors),
-  inventory: () => vi.mocked(getDashboardSummary),
-};
+/** The mocked API function behind each dashboard section. An explicit switch, not an object lookup by a runtime key. */
+function sourceFn(id: (typeof IDS)[number]) {
+  switch (id) {
+    case "alarms": return vi.mocked(getAlarmOverview);
+    case "geography": return vi.mocked(getGeography);
+    case "exceptions": return vi.mocked(getDashboardExceptions);
+    case "collectors": return vi.mocked(listCollectors);
+    case "inventory": return vi.mocked(getDashboardSummary);
+  }
+}
 
 function recover(id: string) {
   if (id === "alarms") vi.mocked(getAlarmOverview).mockResolvedValue(overview([alarm("a")]));
@@ -318,7 +321,7 @@ function recover(id: string) {
 
 describe.each(SOURCES)("$id section states", ({ id, what, permission, user, empty }) => {
   it("is loading while the request is in flight: a status, no records and no zero", async () => {
-    (SOURCE_FN[id]() as unknown as { mockReturnValue: (v: unknown) => void }).mockReturnValue(never());
+    (sourceFn(id) as unknown as { mockReturnValue: (v: unknown) => void }).mockReturnValue(never());
     renderWithProviders(<DashboardPage />, { user: ALL });
 
     await waitFor(() => expect(stateOf(id)).toBe("loading"));
@@ -338,7 +341,7 @@ describe.each(SOURCES)("$id section states", ({ id, what, permission, user, empt
   });
 
   it("shows an error, not an empty or zero state, when the first request fails, and retries from the keyboard", async () => {
-    (SOURCE_FN[id]() as unknown as { mockRejectedValue: (v: unknown) => void }).mockRejectedValue(new Error("Upstream timed out"));
+    (sourceFn(id) as unknown as { mockRejectedValue: (v: unknown) => void }).mockRejectedValue(new Error("Upstream timed out"));
     const userEv = userEvent.setup();
     renderWithProviders(<DashboardPage />, { user: ALL });
 
@@ -356,7 +359,7 @@ describe.each(SOURCES)("$id section states", ({ id, what, permission, user, empt
   });
 
   it("is Access restricted, naming the permission, when the backend answers 403: never zero, empty or healthy", async () => {
-    (SOURCE_FN[id]() as unknown as { mockRejectedValue: (v: unknown) => void }).mockRejectedValue(new ApiError(403, "Forbidden", "Missing permission", null));
+    (sourceFn(id) as unknown as { mockRejectedValue: (v: unknown) => void }).mockRejectedValue(new ApiError(403, "Forbidden", "Missing permission", null));
     renderWithProviders(<DashboardPage />, { user: ALL });
 
     await waitFor(() => expect(stateOf(id)).toBe("restricted"));
@@ -375,7 +378,7 @@ describe.each(SOURCES)("$id section states", ({ id, what, permission, user, empt
     await waitFor(() => expect(stateOf(id)).toBe("restricted"));
     expect(within(section(id)).getByRole("heading", { level: 3, name: "Access restricted" })).toBeInTheDocument();
     expect(within(section(id)).getByText(permission)).toBeInTheDocument();
-    expect(SOURCE_FN[id]()).not.toHaveBeenCalled();
+    expect(sourceFn(id)).not.toHaveBeenCalled();
   });
 });
 
@@ -396,14 +399,14 @@ describe("Authorization", () => {
 
     await waitFor(() => expect(stateOf("alarms")).toBe("restricted"));
     for (const id of IDS) expect(stateOf(id)).toBe("restricted");
-    for (const id of IDS) expect(SOURCE_FN[id]()).not.toHaveBeenCalled();
+    for (const id of IDS) expect(sourceFn(id)).not.toHaveBeenCalled();
   });
 
   it("reads as loading, never restricted or empty, before the profile is known, and requests nothing", () => {
     renderWithProviders(<DashboardPage />, { user: null });
 
     for (const id of IDS) expect(stateOf(id)).toBe("loading");
-    for (const id of IDS) expect(SOURCE_FN[id]()).not.toHaveBeenCalled();
+    for (const id of IDS) expect(sourceFn(id)).not.toHaveBeenCalled();
   });
 
   it("gives each Access restricted panel its own heading id and keeps only the sections as regions", async () => {

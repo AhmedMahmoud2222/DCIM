@@ -107,7 +107,11 @@ async function mockApi(page: Page) {
 }
 
 const alarmsPanel = (page: Page) => page.locator('[data-section="alarms"]');
-const counter = (page: Page, name: string) => alarmsPanel(page).getByRole("button", { name: new RegExp(`^${name}\\s*\\d+$`) });
+/** Counter buttons are named "<Severity> <count>". Literal patterns, not a RegExp built from a string. */
+function counter(page: Page, name: "Critical" | "Warning" | "Info") {
+  const pattern = name === "Critical" ? /^Critical\s*\d+$/ : name === "Warning" ? /^Warning\s*\d+$/ : /^Info\s*\d+$/;
+  return alarmsPanel(page).getByRole("button", { name: pattern });
+}
 
 async function expectNoHorizontalOverflow(page: Page) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

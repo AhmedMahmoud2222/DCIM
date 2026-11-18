@@ -222,8 +222,9 @@ test("dashboard sections come in priority order, settle out of loading, and fit 
   await signIn(page);
   await expect(page.getByRole("heading", { level: 1, name: "Operations overview" })).toBeVisible();
 
-  const ids = ["alarms", "exceptions", "collectors", "inventory"];
-  await expect(page.locator("[data-section]")).toHaveCount(4);
+  // Priority order: alarms and geographic coverage first, then events/exceptions, collectors, inventory.
+  const ids = ["alarms", "geography", "exceptions", "collectors", "inventory"];
+  await expect(page.locator("[data-section]")).toHaveCount(5);
   expect(await page.locator("[data-section]").evaluateAll((els) => els.map((el) => el.getAttribute("data-section")))).toEqual(ids);
 
   // Every section ends in a deliberate state. An unfinished load or a failed request is not acceptable here,
@@ -234,20 +235,28 @@ test("dashboard sections come in priority order, settle out of loading, and fit 
 
   const noSideways = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
 
-  // Desktop: alarms and exceptions share a row, alarms first and wider.
+  // Desktop: alarms and geographic coverage share the first row (alarms first), and so do exceptions and collectors.
   await page.setViewportSize({ width: 1280, height: 800 });
-  const alarms = (await page.locator('[data-section="alarms"]').boundingBox())!;
-  const exceptions = (await page.locator('[data-section="exceptions"]').boundingBox())!;
-  expect(alarms.x).toBeLessThan(exceptions.x);
-  expect(Math.abs(alarms.y - exceptions.y)).toBeLessThan(2);
-  expect(alarms.width).toBeGreaterThan(exceptions.width);
+  const box = async (id: string) => (await page.locator(`[data-section="${id}"]`).boundingBox())!;
+  const alarms = await box("alarms");
+  const geography = await box("geography");
+  expect(alarms.x).toBeLessThan(geography.x);
+  expect(Math.abs(alarms.y - geography.y)).toBeLessThan(2);
+  const exceptions = await box("exceptions");
+  const collectors = await box("collectors");
+  expect(exceptions.x).toBeLessThan(collectors.x);
+  expect(Math.abs(exceptions.y - collectors.y)).toBeLessThan(2);
+  expect(exceptions.y).toBeGreaterThanOrEqual(alarms.y + alarms.height - 1);
   expect(await noSideways()).toBe(true);
 
-  // Phone: one column in the same order, and the page itself never scrolls sideways.
+  // Phone: one column in the same priority order, and the page itself never scrolls sideways.
   await page.setViewportSize({ width: 390, height: 844 });
-  const phoneAlarms = (await page.locator('[data-section="alarms"]').boundingBox())!;
-  const phoneExceptions = (await page.locator('[data-section="exceptions"]').boundingBox())!;
-  expect(phoneExceptions.y).toBeGreaterThanOrEqual(phoneAlarms.y + phoneAlarms.height - 1);
+  let previousBottom = -Infinity;
+  for (const id of ids) {
+    const current = await box(id);
+    expect(current.y, `${id} stacks below the section before it`).toBeGreaterThanOrEqual(previousBottom - 1);
+    previousBottom = current.y + current.height;
+  }
   expect(await noSideways()).toBe(true);
 });
 
@@ -321,6 +330,7 @@ const FIXTURE_ALARMS = Array.from({ length: 4 }, (_, index) => ({
   managed_asset_id: `eq-${index}`,
   subject_key: `PDU-${LONG}-${index} · branch current`,
   status: index === 3 ? "ACKNOWLEDGED" : "ACTIVE",
+  severity: ["critical", "warning", "info", "warning"][index],
   opened_at: minutesAgo(10 + index),
   acknowledged_at: index === 3 ? minutesAgo(2) : null,
   cleared_at: null,
@@ -337,6 +347,41 @@ const FIXTURE_COLLECTORS = [
   { id: "c1", name: `edge-${LONG}`, collector_type: "edge", site_id: null, status: "active", version_string: "1", health: "offline", last_heartbeat_at: null, seconds_since_heartbeat: 5700 },
   { id: "c2", name: "central-01", collector_type: "central", site_id: null, status: "active", version_string: "1", health: "healthy", last_heartbeat_at: null, seconds_since_heartbeat: 12 },
 ];
+const FIXTURE_GEOGRAPHY = {
+  totals: { countries: 2, cities: 2, sites: 3, sites_with_coordinates: 2, sites_without_coordinates: 1 },
+  countries: [
+    { id: "country-1", name: `Country-${LONG}`, iso_code: "AE", city_count: 1, site_count: 2 },
+    { id: "country-2", name: "Second Country", iso_code: null, city_count: 1, site_count: 1 },
+  ],
+  cities: [
+    { id: "city-1", country_id: "country-1", name: `City-${LONG}`, site_count: 2 },
+    { id: "city-2", country_id: "country-2", name: "Second City", site_count: 1 },
+  ],
+  sites: [
+    { id: "site-1", code: "DC1", name: `Site-${LONG}-one`, city_id: "city-1", latitude: 25.2, longitude: 55.27 },
+    { id: "site-2", code: "DC2", name: `Site-${LONG}-two`, city_id: "city-1", latitude: 25.21, longitude: 55.28 },
+    { id: "site-3", code: "DC3", name: "Site without coordinates", city_id: "city-2", latitude: null, longitude: null },
+  ],
+  sites_truncated: false,
+  as_of: new Date().toISOString(),
+};
+/** Mirrors GET /alarms/overview for the dashboard's default request (severity All, acknowledged excluded). */
+function alarmOverview(search: URLSearchParams) {
+  const includeAcknowledged = search.get("include_acknowledged") === "true";
+  const severity = search.get("severity");
+  const inScope = FIXTURE_ALARMS.filter((alarm) => includeAcknowledged || alarm.status === "ACTIVE");
+  const matching = inScope.filter((alarm) => !severity || alarm.severity === severity);
+  const count = (level: string) => inScope.filter((alarm) => alarm.severity === level).length;
+  return {
+    scope: { include_acknowledged: includeAcknowledged, severity },
+    counts: { critical: count("critical"), warning: count("warning"), info: count("info"), total: inScope.length },
+    items: matching.slice(0, 7),
+    matching_total: matching.length,
+    limit: 7,
+    truncated: matching.length > 7,
+    as_of: new Date().toISOString(),
+  };
+}
 const FIXTURE_SUMMARY = {
   site_summary: { sites: 3, buildings: 5, floors: 12, rooms: 28, racks: 412, equipment: 2318, power_nodes: 164 },
   rack_summary: { total_racks: 412, occupied_racks: 338, available_racks: 74 },
@@ -366,6 +411,8 @@ function fixtureFor(pathname: string, search: URLSearchParams): unknown {
     case "/rooms": return asPage([{ id: "room-1", name: `Room-${LONG}`, code: "R1", room_type: "data_hall" }]);
     case "/discovery/devices": return FIXTURE_DEVICES;
     case "/discovery/reconciliation": return FIXTURE_DIFFS;
+    case "/alarms/overview": return alarmOverview(search);
+    case "/dashboard/geography": return FIXTURE_GEOGRAPHY;
     case "/alarms": return FIXTURE_ALARMS.filter((alarm) => !search.get("status") || alarm.status === search.get("status"));
     case "/dashboard/exceptions": return FIXTURE_EXCEPTIONS;
     case "/dashboard/summary": return FIXTURE_SUMMARY;
@@ -424,12 +471,13 @@ const ROUTES: RouteReadiness[] = [
   {
     route: "/",
     heading: "Operations overview",
-    served: "/dashboard/summary",
+    served: "/dashboard/geography",
     populated: async (page, check = expect) => {
-      for (const id of ["alarms", "exceptions", "collectors", "inventory"]) {
+      for (const id of ["alarms", "geography", "exceptions", "collectors", "inventory"]) {
         await check(page.locator(`[data-section="${id}"]`)).toHaveAttribute("data-state", "ready");
       }
-      await check(page.locator('[data-section="alarms"] li')).toHaveCount(3);
+      // The latest-alarms list shows the server's ACTIVE items (the acknowledged fixture is excluded by default).
+      await check(page.locator('[data-section="alarms"] ul[aria-label^="Latest"] > li')).toHaveCount(3);
       await check(page.locator('[data-section="exceptions"] li')).toHaveCount(FIXTURE_EXCEPTIONS.length);
     },
   },
@@ -610,7 +658,7 @@ test("text resize to 200% (fixed-pixel text included) keeps content and controls
   // Representative fixed-pixel and relative text, sampled before and after scaling on the pages that hold them.
   const samples: Record<string, string[]> = {
     "/equipment": ['table[aria-label="Equipment"] thead th', 'table[aria-label="Equipment"] tbody td span.rounded-sm', "h1"],
-    "/": ['[data-section="inventory"] p.text-xs', '[data-section="alarms"] h2', 'main span.rounded-sm'],
+    "/": ['[data-section="inventory"] span[class*="text-[11px]"]', '[data-section="alarms"] h2', 'main span.rounded-sm'],
   };
 
   for (const entry of ROUTES) {

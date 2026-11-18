@@ -86,3 +86,28 @@ explicit "N more" link; the full list lives in **Events → Infrastructure**.
 - `/events?view=infrastructure` opens the Infrastructure tab. Other existing Events tabs are unchanged.
 - The map is SVG, dependency-free and tile-free; a keyboard-reachable list with the same sites is always
   rendered. No external tile provider is contacted, so there is no tile-failure mode to recover from.
+
+## Owner decisions required (not made in this PR)
+
+1. **Site-restricted access to alarms and the dashboard.** `alarm:read` and `dashboard:read` are not in
+   `SCOPE_AWARE_PERMISSIONS`, so a site-restricted user receives 403 on `/alarms/overview`, `/dashboard/summary`
+   and `/dashboard/exceptions` (the dashboard then shows each source as "Access restricted", never as zero).
+   `alarm_visible_clause` is already in place and tested, so making `alarm:read` scope-aware is mostly a policy
+   decision: add the permission to `SCOPE_AWARE_PERMISSIONS`, add its routes to the reviewed inventory in
+   `tests/api/test_user_groups_authz.py`, and decide how alarms with no managed asset are treated for restricted
+   callers (today: hidden). `dashboard:read` summary and exceptions are computed globally (power graph) and
+   would need their own scoping work, which is out of scope here.
+2. **Index for the alarm overview.** The overview filters on `alarm.status` and orders by `opened_at DESC, id DESC`;
+   the existing `ix_alarm_integration_status_opened` starts with `integration_id`, so it does not serve this query
+   and large alarm tables may be scanned. A partial index such as
+   `(opened_at DESC, id DESC) WHERE status IN ('ACTIVE','ACKNOWLEDGED')` would serve it. It needs an Alembic
+   migration, which is held with 0057 under Issue #214, so none is added. Measure on representative data first.
+3. **Site coordinates.** `GET /dashboard/geography` returns latitude/longitude for the sites the caller can already
+   see. The existing scoped `GET /sites` does not expose them. Confirm that site coordinates are not sensitive for
+   restricted roles; if they are, gate them behind a stricter permission and the map falls back to the list.
+
+## Known CI limitation
+
+`frontend-suite` runs `npm audit --audit-level=high` before Vitest, typecheck, lint and build. That step fails on
+the shared lockfile (picomatch GHSA-fc5q-39xc-vjpf, no patched release; Issue #364 / PR #366) independently of this
+change, which modifies no dependency file. Dependency and audit-policy changes are under owner hold in #364.
