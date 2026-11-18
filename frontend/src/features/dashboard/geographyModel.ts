@@ -1,7 +1,7 @@
 import type { Geography, GeographyCity, GeographyCountry, GeographySite } from "@/types";
 
-/** Equirectangular projection onto a 360 x 180 plane: x = longitude + 180, y = 90 - latitude. No
- * coastline or country shape is drawn; the map is a graticule plus the sites the API placed. */
+/** Equirectangular projection onto a 360 x 180 plane: x = longitude + 180, y = 90 - latitude. Country
+ * shapes come from the locally packaged basemap (basemap/); sites are placed from the API's coordinates. */
 export const MAP_WIDTH = 360;
 export const MAP_HEIGHT = 180;
 export const ZOOM_LEVELS = [1, 2, 4, 8, 16, 32] as const;
@@ -139,11 +139,14 @@ export interface GeographyIndex {
   sitesByCity: Map<string, GeographySite[]>;
   cityById: Map<string, GeographyCity>;
   countryById: Map<string, GeographyCountry>;
+  /** True unless the API said "included": withheld coordinates are never placed, whatever the site rows hold. */
+  withheld: boolean;
   placed: PlacedSite[];
   unplaced: GeographySite[];
 }
 
 export function indexGeography(geography: Geography): GeographyIndex {
+  const withheld = geography.coordinates !== "included";
   const citiesByCountry = new Map<string, GeographyCity[]>();
   const sitesByCity = new Map<string, GeographySite[]>();
   for (const city of geography.cities) {
@@ -162,13 +165,15 @@ export function indexGeography(geography: Geography): GeographyIndex {
     sitesByCity,
     cityById: new Map(geography.cities.map((city) => [city.id, city])),
     countryById: new Map(geography.countries.map((country) => [country.id, country])),
-    placed: geography.sites.filter(hasCoordinates),
-    unplaced: geography.sites.filter((site) => !hasCoordinates(site)),
+    withheld,
+    placed: withheld ? [] : geography.sites.filter(hasCoordinates),
+    unplaced: withheld ? [] : geography.sites.filter((site) => !hasCoordinates(site)),
   };
 }
 
 /** The placed sites under a country or a city, for focusing the map on a drill-down selection. */
 export function placedSitesUnder(index: GeographyIndex, selection: { countryId?: string; cityId?: string }): PlacedSite[] {
+  if (index.withheld) return [];
   if (selection.cityId) return (index.sitesByCity.get(selection.cityId) ?? []).filter(hasCoordinates);
   if (selection.countryId) {
     const cities = index.citiesByCountry.get(selection.countryId) ?? [];

@@ -348,6 +348,7 @@ const FIXTURE_COLLECTORS = [
   { id: "c2", name: "central-01", collector_type: "central", site_id: null, status: "active", version_string: "1", health: "healthy", last_heartbeat_at: null, seconds_since_heartbeat: 12 },
 ];
 const FIXTURE_GEOGRAPHY = {
+  coordinates: "included",
   totals: { countries: 2, cities: 2, sites: 3, sites_with_coordinates: 2, sites_without_coordinates: 1 },
   countries: [
     { id: "country-1", name: `Country-${LONG}`, iso_code: "AE", city_count: 1, site_count: 2 },

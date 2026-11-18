@@ -2,14 +2,21 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GeographyPanel } from "@/features/dashboard/GeographyPanel";
+import { loadBasemap } from "@/features/dashboard/basemap/loadBasemap";
+import { tinyBasemap } from "@/features/dashboard/basemap/testFixtures";
+import { GeographyPanel, WITHHELD_MESSAGE } from "@/features/dashboard/GeographyPanel";
 import { getGeography } from "@/features/power/api";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import type { Geography } from "@/types";
 
 vi.mock("@/features/power/api");
+vi.mock("@/features/dashboard/basemap/loadBasemap", () => ({ loadBasemap: vi.fn() }));
+
+const BASEMAP = tinyBasemap();
+const BUNDLED = { source: "bundled", datasetId: BASEMAP.dataset_id, version: BASEMAP.version, basemap: BASEMAP } as const;
 
 const GEOGRAPHY: Geography = {
+  coordinates: "included",
   // The totals are the server's exact authorized counts; they deliberately differ from the list lengths.
   totals: { countries: 5, cities: 9, sites: 40, sites_with_coordinates: 3, sites_without_coordinates: 1 },
   countries: [
@@ -34,10 +41,21 @@ const GEOGRAPHY: Geography = {
 const panel = () => document.querySelector('[data-section="geography"]') as HTMLElement;
 const svg = () => panel().querySelector("svg") as SVGSVGElement;
 const ready = () => waitFor(() => expect(panel()).toHaveAttribute("data-state", "ready"));
+const countries = () => Array.from(panel().querySelectorAll('[data-testid="basemap-country"]'));
+const basemapReady = () => waitFor(() => expect(countries().length).toBeGreaterThan(0));
+
+/** What a restricted caller receives: no coordinates and no with/without-coordinates totals. */
+const WITHHELD: Geography = {
+  ...GEOGRAPHY,
+  coordinates: "withheld",
+  totals: { ...GEOGRAPHY.totals, sites_with_coordinates: null, sites_without_coordinates: null },
+  sites: GEOGRAPHY.sites.map((s) => ({ ...s, latitude: null, longitude: null })),
+};
 
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getGeography).mockResolvedValue(GEOGRAPHY);
+  vi.mocked(loadBasemap).mockResolvedValue(BUNDLED);
 });
 
 describe("Geographic coverage panel", () => {
@@ -168,5 +186,161 @@ describe("Geographic coverage panel", () => {
     expect(panel()).toHaveAttribute("data-state", "restricted");
     expect(panel()).toHaveTextContent("location:read");
     expect(getGeography).not.toHaveBeenCalled();
+  });
+});
+
+describe("Geographic coverage panel basemap", () => {
+  it("draws every basemap country beneath the markers and highlights the countries with authorized sites", async () => {
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    await basemapReady();
+
+    expect(countries()).toHaveLength(4);
+    const lit = countries().filter((path) => path.getAttribute("data-highlighted") === "true").map((path) => path.getAttribute("data-iso2"));
+    expect(lit.sort()).toEqual(["AE", "GB"]);
+    const layer = panel().querySelector('[data-testid="basemap-layer"]') as SVGGElement;
+    expect(layer).toHaveAttribute("aria-hidden", "true");
+    expect(svg().firstElementChild).toBe(layer);
+    expect(screen.getByTestId("basemap-caption")).toHaveTextContent("Basemap: Natural Earth 50m 5.1.2-r1 (bundled)");
+    expect(screen.queryByTestId("basemap-note")).not.toBeInTheDocument();
+    // Included mode keeps the markers and clusters as before.
+    expect(within(panel()).getAllByTestId("map-site")).toHaveLength(1);
+    expect(within(panel()).getAllByTestId("map-cluster")).toHaveLength(1);
+  });
+
+  it("does not rebuild the country paths when the view pans or zooms", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    await basemapReady();
+    const before = countries();
+    await user.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(svg().getAttribute("viewBox")).toBe("90 45 180 90");
+    const after = countries();
+    expect(after).toHaveLength(before.length);
+    after.forEach((path, i) => expect(path).toBe(before[i]));
+  });
+
+  it("matches lowercase API iso codes and never highlights entities without an iso2", async () => {
+    vi.mocked(getGeography).mockResolvedValue({ ...GEOGRAPHY, countries: [{ ...GEOGRAPHY.countries[0], iso_code: "ae" }, { ...GEOGRAPHY.countries[1], iso_code: null }] });
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    await basemapReady();
+    const lit = countries().filter((path) => path.getAttribute("data-highlighted") === "true");
+    expect(lit.map((path) => path.getAttribute("data-iso2"))).toEqual(["AE"]);
+  });
+
+  it("shows the rejection note of a refused custom basemap as a status line", async () => {
+    vi.mocked(loadBasemap).mockResolvedValue({
+      ...BUNDLED,
+      note: "Custom basemap 5.2.0 was rejected (checksum mismatch); using bundled basemap 5.1.2-r1.",
+    });
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    const note = await screen.findByTestId("basemap-note");
+    expect(note.parentElement).toHaveAttribute("role", "status");
+    expect(note).toHaveTextContent("Basemap notice:");
+    expect(note).toHaveTextContent("Custom basemap 5.2.0 was rejected (checksum mismatch); using bundled basemap 5.1.2-r1.");
+  });
+
+  it("captions an override as custom", async () => {
+    vi.mocked(loadBasemap).mockResolvedValue({ ...BUNDLED, source: "override", datasetId: "custom-borders", version: "5.2.0" });
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    await waitFor(() => expect(screen.getByTestId("basemap-caption")).toHaveTextContent("Basemap: custom-borders 5.2.0 (custom)"));
+  });
+
+  it("keeps the graticule and the markers while the basemap is loading or unavailable", async () => {
+    vi.mocked(loadBasemap).mockReturnValue(new Promise(() => undefined));
+    const { unmount } = renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    expect(screen.getByTestId("basemap-caption")).toHaveTextContent("Basemap: loading");
+    expect(within(panel()).getAllByTestId("map-site")).toHaveLength(1);
+    expect(svg().querySelectorAll("line").length).toBe(20);
+    unmount();
+
+    vi.mocked(loadBasemap).mockResolvedValue({
+      source: "unavailable",
+      datasetId: null,
+      version: null,
+      basemap: null,
+      note: "The bundled basemap is unavailable, so only the graticule is drawn.",
+    });
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    await waitFor(() => expect(screen.getByTestId("basemap-caption")).toHaveTextContent("Basemap: unavailable; only the graticule is drawn."));
+    expect(countries()).toHaveLength(0);
+    expect(svg().querySelectorAll("line").length).toBe(20);
+    expect(within(panel()).getAllByTestId("map-site")).toHaveLength(1);
+    expect(screen.getByTestId("basemap-note")).toHaveTextContent("only the graticule is drawn");
+  });
+
+  it("does not load the basemap without location:read", () => {
+    renderWithProviders(<GeographyPanel access="denied" />);
+    expect(loadBasemap).not.toHaveBeenCalled();
+  });
+});
+
+describe("Geographic coverage panel with coordinates withheld", () => {
+  beforeEach(() => {
+    vi.mocked(getGeography).mockResolvedValue(WITHHELD);
+  });
+
+  it("draws no marker or cluster, says why, and still highlights the countries", async () => {
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    await basemapReady();
+
+    expect(within(panel()).queryAllByTestId("map-site")).toHaveLength(0);
+    expect(within(panel()).queryAllByTestId("map-cluster")).toHaveLength(0);
+    expect(screen.getByTestId("coordinates-withheld")).toHaveTextContent(WITHHELD_MESSAGE);
+    expect(screen.getByTestId("map-status")).toHaveTextContent("site markers withheld");
+    expect(panel()).not.toHaveTextContent("No authorized site has coordinates");
+    expect(panel()).not.toHaveTextContent(/\d+ placed on the map/);
+    expect(countries().filter((path) => path.getAttribute("data-highlighted") === "true")).toHaveLength(2);
+  });
+
+  it("never places a marker in withheld mode, even if a row still carried coordinates", async () => {
+    vi.mocked(getGeography).mockResolvedValue({ ...WITHHELD, sites: GEOGRAPHY.sites });
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    expect(within(panel()).queryAllByTestId("map-site")).toHaveLength(0);
+    expect(within(panel()).queryAllByTestId("map-cluster")).toHaveLength(0);
+  });
+
+  it("replaces the sites-without-coordinates group with the withheld message", async () => {
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+
+    expect(screen.queryByTestId("sites-without-coordinates")).not.toBeInTheDocument();
+    expect(panel()).not.toHaveTextContent("Sites without coordinates");
+    expect(screen.getByTestId("coordinates-withheld-list")).toHaveTextContent("Withheld for your access level, so no site is placed on the map.");
+    expect(screen.getByTestId("coordinates-withheld")).toHaveTextContent(WITHHELD_MESSAGE);
+  });
+
+  it("keeps the complete list, and a country click focuses the map on that country's shape", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeographyPanel access="granted" />);
+    await ready();
+    await basemapReady();
+
+    const list = screen.getByTestId("geography-list");
+    await user.click(within(list).getByRole("button", { name: "UAE" }));
+    // The UAE box is about 5 x 3.5 degrees, which fits the closest zoom.
+    expect(screen.getByTestId("map-status")).toHaveTextContent("Zoom 32×");
+    expect(panel().querySelector('[data-selected="true"]')).toHaveAttribute("data-iso2", "AE");
+    const [x, y, w, h] = (svg().getAttribute("viewBox") ?? "").split(" ").map(Number);
+    expect(x + w / 2).toBeCloseTo(233.95);
+    expect(y + h / 2).toBeCloseTo(65.65);
+
+    await user.click(within(list).getByRole("button", { name: "Dubai" }));
+    expect(within(list).queryByText("no coordinates")).not.toBeInTheDocument();
+    await user.click(within(list).getByRole("button", { name: "Dubai Two (DXB2)" }));
+    expect(screen.getByTestId("selected-site")).toHaveTextContent("Coordinates withheld for your access level");
+
+    await user.click(within(list).getByRole("button", { name: "United Kingdom" }));
+    expect(screen.getByTestId("map-status")).toHaveTextContent("Zoom 8×");
+    const [ux, , uw] = (svg().getAttribute("viewBox") ?? "").split(" ").map(Number);
+    expect(ux + uw / 2).toBeCloseTo(177);
   });
 });

@@ -1209,7 +1209,16 @@ export interface GeographySite {
 }
 
 export interface Geography {
-  totals: { countries: number; cities: number; sites: number; sites_with_coordinates: number; sites_without_coordinates: number };
+  /** "withheld" when the caller's scope may not see precise site coordinates: every site latitude/longitude
+   * is then null and the with/without-coordinates totals are null too. */
+  coordinates: "included" | "withheld";
+  totals: {
+    countries: number;
+    cities: number;
+    sites: number;
+    sites_with_coordinates: number | null;
+    sites_without_coordinates: number | null;
+  };
   countries: GeographyCountry[];
   cities: GeographyCity[];
   sites: GeographySite[];

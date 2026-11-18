@@ -56,6 +56,7 @@ const SUMMARY = {
 } as unknown as DashboardSummary;
 
 const EMPTY_GEOGRAPHY: Geography = {
+  coordinates: "included",
   totals: { countries: 0, cities: 0, sites: 0, sites_with_coordinates: 0, sites_without_coordinates: 0 },
   countries: [],
   cities: [],
@@ -64,6 +65,7 @@ const EMPTY_GEOGRAPHY: Geography = {
   as_of: "2026-11-18T10:00:00Z",
 };
 const GEOGRAPHY: Geography = {
+  coordinates: "included",
   totals: { countries: 1, cities: 1, sites: 1, sites_with_coordinates: 1, sites_without_coordinates: 0 },
   countries: [{ id: "ae", name: "UAE", iso_code: "AE", city_count: 1, site_count: 1 }],
   cities: [{ id: "dxb", country_id: "ae", name: "Dubai", site_count: 1 }],

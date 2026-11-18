@@ -91,6 +91,7 @@ describe("clustering", () => {
 
 describe("indexGeography", () => {
   const geography: Geography = {
+    coordinates: "included",
     totals: { countries: 2, cities: 2, sites: 3, sites_with_coordinates: 2, sites_without_coordinates: 1 },
     countries: [
       { id: "ae", name: "UAE", iso_code: "AE", city_count: 1, site_count: 2 },
@@ -118,5 +119,14 @@ describe("indexGeography", () => {
     expect(placedSitesUnder(index, { countryId: "ae" }).map((s) => s.id)).toEqual(["s1"]);
     expect(placedSitesUnder(index, { cityId: "lon" }).map((s) => s.id)).toEqual(["s3"]);
     expect(placedSitesUnder(index, {}).map((s) => s.id)).toEqual(["s1", "s3"]);
+  });
+
+  it("places nothing when coordinates are withheld, even if a row carries some, and keeps the tree", () => {
+    const index = indexGeography({ ...geography, coordinates: "withheld" });
+    expect(index.withheld).toBe(true);
+    expect(index.placed).toEqual([]);
+    expect(index.unplaced).toEqual([]);
+    expect(placedSitesUnder(index, { countryId: "ae" })).toEqual([]);
+    expect(index.sitesByCity.get("dxb")?.map((s) => s.id)).toEqual(["s1", "s2"]);
   });
 });

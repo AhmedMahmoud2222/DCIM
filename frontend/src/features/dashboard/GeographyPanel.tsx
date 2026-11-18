@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { KeyboardEvent, useMemo, useState } from "react";
+import { KeyboardEvent, memo, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { CountryShape, projectBasemap, ProjectedBasemap } from "@/features/dashboard/basemap/projection";
+import { BasemapState, useBasemap } from "@/features/dashboard/basemap/useBasemap";
 import { Access, DASHBOARD_PERMISSIONS } from "@/features/dashboard/dashboardModel";
 import { DashboardSection } from "@/features/dashboard/DashboardSection";
 import {
@@ -17,6 +19,7 @@ import {
   MapView,
   panView,
   placedSitesUnder,
+  Point,
   project,
   viewBox,
   ZOOM_LEVELS,
@@ -35,6 +38,61 @@ interface Selection {
 const LONGITUDES = Array.from({ length: 13 }, (_, i) => i * 30);
 const LATITUDES = Array.from({ length: 7 }, (_, i) => i * 30);
 
+export const WITHHELD_MESSAGE =
+  "Precise site coordinates are withheld for your access level. Countries with authorized sites are highlighted.";
+
+/** Human name of a basemap dataset for the provenance caption; unknown datasets show their id. */
+function datasetLabel(datasetId: string) {
+  return datasetId === "natural-earth-admin0-50m" ? "Natural Earth 50m" : datasetId;
+}
+
+function basemapCaption(basemap: BasemapState) {
+  if (basemap.status === "loading") return "Basemap: loading; the graticule is shown meanwhile.";
+  if (basemap.status === "unavailable") return "Basemap: unavailable; only the graticule is drawn.";
+  const { datasetId, version, source } = basemap.result;
+  return `Basemap: ${datasetLabel(datasetId)} ${version} (${source === "override" ? "custom" : "bundled"})`;
+}
+
+function basemapNote(basemap: BasemapState) {
+  if (basemap.status === "ready") return basemap.result.note;
+  return basemap.status === "unavailable" ? basemap.note : undefined;
+}
+
+/** Country polygons. Decorative: the list below is the accessible equivalent. Memoized on its props, which do
+ * not change when the view pans or zooms, so the large path strings are not rebuilt on every view change. The
+ * country chosen in the drill-down gets a heavier outline. */
+const CountryLayer = memo(function CountryLayer({
+  shapes,
+  highlighted,
+  selectedIso2,
+}: {
+  shapes: CountryShape[];
+  highlighted: ReadonlySet<string>;
+  selectedIso2?: string;
+}) {
+  const isLit = (shape: CountryShape) => shape.iso2 !== null && highlighted.has(shape.iso2);
+  const path = (shape: CountryShape, lit: boolean) => (
+    <path
+      key={shape.key}
+      d={shape.d}
+      data-testid="basemap-country"
+      data-iso2={shape.iso2 ?? undefined}
+      data-highlighted={lit ? "true" : undefined}
+      data-selected={shape.iso2 !== null && shape.iso2 === selectedIso2 ? "true" : undefined}
+      fillRule="evenodd"
+      vectorEffect="non-scaling-stroke"
+      strokeWidth={shape.iso2 !== null && shape.iso2 === selectedIso2 ? 2 : lit ? 1 : 0.5}
+      strokeLinejoin="round"
+    />
+  );
+  return (
+    <g aria-hidden="true" data-testid="basemap-layer">
+      <g className="fill-surface-hover stroke-line-control">{shapes.filter((shape) => !isLit(shape)).map((shape) => path(shape, false))}</g>
+      <g className="fill-tone-info-fg/30 stroke-tone-info-fg">{shapes.filter(isLit).map((shape) => path(shape, true))}</g>
+    </g>
+  );
+});
+
 function siteLabel(site: GeographySite) {
   return `${site.name} (${site.code})`;
 }
@@ -48,18 +106,27 @@ function placeOf(index: GeographyIndex, site: GeographySite) {
 function GeographyMap({
   index,
   view,
+  basemap,
+  projected,
+  highlighted,
+  selectedIso2,
   selectedSiteId,
   onView,
   onSelectSite,
 }: {
   index: GeographyIndex;
   view: MapView;
+  basemap: BasemapState;
+  projected: ProjectedBasemap | null;
+  highlighted: ReadonlySet<string>;
+  selectedIso2?: string;
   selectedSiteId?: string;
   onView: (view: MapView) => void;
   onSelectSite: (site: GeographySite) => void;
 }) {
   const zoom = zoomOf(view);
   const clusters = useMemo(() => clusterSites(index.placed, zoom), [index.placed, zoom]);
+  const note = basemapNote(basemap);
   // Every size is in map units, so it is divided by the zoom to stay the same on screen.
   const unit = 1 / zoom;
 
@@ -106,18 +173,19 @@ function GeographyMap({
           ))}
         </div>
         <p className="text-xs text-fg-secondary" role="status" data-testid="map-status">
-          Zoom {zoom}× · {clusters.length} {clusters.length === 1 ? "marker" : "markers"}
+          Zoom {zoom}× · {index.withheld ? "site markers withheld" : `${clusters.length} ${clusters.length === 1 ? "marker" : "markers"}`}
         </p>
       </div>
       <div
         tabIndex={0}
         role="group"
-        aria-label="Site map. Arrow keys pan, plus and minus zoom; Tab reaches the markers."
+        aria-label={index.withheld ? "Site map. Arrow keys pan, plus and minus zoom." : "Site map. Arrow keys pan, plus and minus zoom; Tab reaches the markers."}
         aria-describedby="geography-map-help"
         onKeyDown={onMapKey}
         className="relative overflow-hidden rounded-sm border border-line-subtle bg-surface-inset"
       >
         <svg viewBox={viewBox(view)} className="block h-auto w-full" style={{ aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}` }} preserveAspectRatio="xMidYMid meet">
+          {projected && <CountryLayer shapes={projected.shapes} highlighted={highlighted} selectedIso2={selectedIso2} />}
           <g aria-hidden="true" className="stroke-line-subtle" fill="none">
             {LONGITUDES.map((x) => (
               <line key={`lon${x}`} x1={x} y1={0} x2={x} y2={MAP_HEIGHT} vectorEffect="non-scaling-stroke" strokeWidth={x === 180 ? 1.5 : 1} />
@@ -176,29 +244,45 @@ function GeographyMap({
             );
           })}
         </svg>
-        {index.placed.length === 0 && (
+        {!index.withheld && index.placed.length === 0 && (
           <p className="absolute inset-0 flex items-center justify-center p-4 text-center text-sm text-fg-secondary">
             No authorized site has coordinates, so nothing is placed on the map.
           </p>
         )}
       </div>
       <p id="geography-map-help" className="text-xs text-fg-secondary">
-        Graticule every 30°. Sites are placed from their recorded latitude and longitude only; no map tiles or borders are drawn.
+        Graticule every 30°. Country borders come from a basemap packaged with the application; no map tiles or external services are used.{" "}
+        {index.withheld ? "Countries with authorized sites are highlighted." : "Sites are placed from their recorded latitude and longitude only."}
       </p>
+      <p data-testid="basemap-caption" className="text-xs text-fg-secondary">
+        {basemapCaption(basemap)}
+      </p>
+      {/* Always mounted, so a note that arrives after the first render is announced. */}
+      <div role="status" data-testid="basemap-note-region">
+        {note && (
+          <p data-testid="basemap-note" className="rounded-sm border border-tone-caution-fg bg-tone-caution-bg px-3 py-2 text-xs text-tone-caution-fg">
+            <span className="font-semibold">Basemap notice: </span>
+            {note}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
 
 function SiteCard({ index, site, onClose }: { index: GeographyIndex; site: GeographySite; onClose: () => void }) {
+  const coordinates = index.withheld
+    ? "Coordinates withheld for your access level"
+    : hasCoordinates(site)
+      ? `${site.latitude.toFixed(4)}, ${site.longitude.toFixed(4)}`
+      : "No coordinates recorded";
   return (
     <div data-testid="selected-site" className="rounded-sm border border-line-subtle bg-surface-page p-3 text-sm">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 [overflow-wrap:anywhere]">
           <p className="font-semibold text-fg-primary">{siteLabel(site)}</p>
           <p className="text-xs text-fg-secondary">{placeOf(index, site) || "Location not in the authorized list"}</p>
-          <p className="text-xs tabular-nums text-fg-secondary">
-            {hasCoordinates(site) ? `${site.latitude.toFixed(4)}, ${site.longitude.toFixed(4)}` : "No coordinates recorded"}
-          </p>
+          <p className="text-xs tabular-nums text-fg-secondary">{coordinates}</p>
         </div>
         <button type="button" onClick={onClose} className="min-h-8 rounded-sm border border-line-control px-2 text-xs text-fg-primary hover:bg-surface-hover">
           Close
@@ -295,7 +379,7 @@ function GeographyTree({
                                   <button type="button" className={linkButton} aria-pressed={s.id === selection.siteId} onClick={() => onSite(s)}>
                                     {siteLabel(s)}
                                   </button>
-                                  {!hasCoordinates(s) && <span className="text-xs text-fg-secondary">no coordinates</span>}
+                                  {!index.withheld && !hasCoordinates(s) && <span className="text-xs text-fg-secondary">no coordinates</span>}
                                 </li>
                               ))}
                             </ul>
@@ -311,44 +395,71 @@ function GeographyTree({
         </ul>
       </div>
 
-      <section aria-labelledby="sites-without-coordinates" data-testid="sites-without-coordinates">
-        <h3 id="sites-without-coordinates" className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">
-          Sites without coordinates ({index.unplaced.length})
-        </h3>
-        {index.unplaced.length === 0 ? (
-          <p className="mt-1 text-xs text-fg-secondary">Every listed site has coordinates.</p>
-        ) : (
-          <ul className="mt-1 space-y-1">
-            {index.unplaced.map((s) => (
-              <li key={s.id} className="flex flex-wrap items-center gap-x-2">
-                <Link className="text-link underline underline-offset-2" to={`/sites/${s.id}`}>
-                  {siteLabel(s)}
-                </Link>
-                <span className="text-xs text-fg-secondary">{placeOf(index, s)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {index.withheld ? (
+        <section aria-labelledby="site-coordinates-withheld" data-testid="coordinates-withheld-list">
+          <h3 id="site-coordinates-withheld" className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">
+            Site coordinates
+          </h3>
+          <p className="mt-1 text-xs text-fg-secondary">Withheld for your access level, so no site is placed on the map. The list above still shows every authorized site.</p>
+        </section>
+      ) : (
+        <section aria-labelledby="sites-without-coordinates" data-testid="sites-without-coordinates">
+          <h3 id="sites-without-coordinates" className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">
+            Sites without coordinates ({index.unplaced.length})
+          </h3>
+          {index.unplaced.length === 0 ? (
+            <p className="mt-1 text-xs text-fg-secondary">Every listed site has coordinates.</p>
+          ) : (
+            <ul className="mt-1 space-y-1">
+              {index.unplaced.map((s) => (
+                <li key={s.id} className="flex flex-wrap items-center gap-x-2">
+                  <Link className="text-link underline underline-offset-2" to={`/sites/${s.id}`}>
+                    {siteLabel(s)}
+                  </Link>
+                  <span className="text-xs text-fg-secondary">{placeOf(index, s)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
     </div>
   );
 }
 
-function GeographyBody({ data }: { data: Geography }) {
+function GeographyBody({ data, basemap }: { data: Geography; basemap: BasemapState }) {
   const index = useMemo(() => indexGeography(data), [data]);
+  const projected = basemap.status === "ready" ? projectBasemap(basemap.result.basemap) : null;
+  const highlighted = useMemo(
+    () => new Set(data.countries.flatMap((country) => (country.iso_code ? [country.iso_code.toUpperCase()] : []))),
+    [data.countries],
+  );
   const [selection, setSelection] = useState<Selection>({});
   const [view, setView] = useState<MapView>(INITIAL_VIEW);
   const selectedSite = selection.siteId ? data.sites.find((s) => s.id === selection.siteId) : undefined;
 
+  /** The corners of a country's polygon bounds, when the basemap has that country. */
+  function countryCorners(countryId?: string): Point[] {
+    const iso2 = countryId ? index.countryById.get(countryId)?.iso_code?.toUpperCase() : undefined;
+    const shape = iso2 ? projected?.byIso2.get(iso2) : undefined;
+    return shape ? [{ x: shape.bounds.minX, y: shape.bounds.minY }, { x: shape.bounds.maxX, y: shape.bounds.maxY }] : [];
+  }
+
   function focusOn(next: Selection) {
     setSelection(next);
-    setView(next.countryId || next.cityId ? fitView(placedSitesUnder(index, next).map(project)) : INITIAL_VIEW);
+    if (!next.countryId && !next.cityId) {
+      setView(INITIAL_VIEW);
+      return;
+    }
+    // Placed sites decide the focus; without any (coordinates withheld or not recorded) the country's shape does.
+    const placed = placedSitesUnder(index, next).map(project);
+    setView(fitView(placed.length > 0 ? placed : countryCorners(next.countryId)));
   }
 
   function selectSite(site: GeographySite) {
     const city = index.cityById.get(site.city_id);
     setSelection({ countryId: city?.country_id, cityId: site.city_id, siteId: site.id });
-    if (hasCoordinates(site)) setView((current) => (current.zoomIndex >= 2 ? current : fitView([project(site)])));
+    if (!index.withheld && hasCoordinates(site)) setView((current) => (current.zoomIndex >= 2 ? current : fitView([project(site)])));
   }
 
   return (
@@ -366,14 +477,30 @@ function GeographyBody({ data }: { data: Geography }) {
         ))}
       </dl>
       <p className="text-xs text-fg-secondary">
-        Authorized locations only: what your account may read. {data.totals.sites_with_coordinates} placed on the map, {data.totals.sites_without_coordinates} without coordinates.
+        Authorized locations only: what your account may read.
+        {!index.withheld && ` ${data.totals.sites_with_coordinates ?? 0} placed on the map, ${data.totals.sites_without_coordinates ?? 0} without coordinates.`}
       </p>
+      {index.withheld && (
+        <p data-testid="coordinates-withheld" className="rounded-sm border border-line-control bg-surface-page px-3 py-2 text-xs text-fg-primary">
+          {WITHHELD_MESSAGE}
+        </p>
+      )}
       {data.sites_truncated && (
         <p data-testid="geography-truncated" className="rounded-sm border border-tone-caution-fg bg-tone-caution-bg px-3 py-2 text-xs text-tone-caution-fg">
           The site list was cut at {data.sites.length} of {data.totals.sites} sites. The map and the list below are incomplete; the counts above are exact.
         </p>
       )}
-      <GeographyMap index={index} view={view} selectedSiteId={selection.siteId} onView={setView} onSelectSite={selectSite} />
+      <GeographyMap
+        index={index}
+        view={view}
+        basemap={basemap}
+        projected={projected}
+        highlighted={highlighted}
+        selectedIso2={selection.countryId ? index.countryById.get(selection.countryId)?.iso_code?.toUpperCase() : undefined}
+        selectedSiteId={selection.siteId}
+        onView={setView}
+        onSelectSite={selectSite}
+      />
       {selectedSite && <SiteCard index={index} site={selectedSite} onClose={() => setSelection(({ countryId, cityId }) => ({ countryId, cityId }))} />}
       <GeographyTree
         index={index}
@@ -387,6 +514,7 @@ function GeographyBody({ data }: { data: Geography }) {
 }
 
 export function GeographyPanel({ access, className = "" }: { access: Access; className?: string }) {
+  const basemap = useBasemap(access === "granted");
   const query = useQuery({
     queryKey: ["dashboard", "geography"],
     queryFn: async () => {
@@ -411,7 +539,7 @@ export function GeographyPanel({ access, className = "" }: { access: Access; cla
       isEmpty={(data) => data.totals.countries === 0 && data.totals.sites === 0 && data.sites.length === 0}
       emptyText="No authorized country, city or site is recorded."
     >
-      {(data) => <GeographyBody data={data} />}
+      {(data) => <GeographyBody data={data} basemap={basemap} />}
     </DashboardSection>
   );
 }

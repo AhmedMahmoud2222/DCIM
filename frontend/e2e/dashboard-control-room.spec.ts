@@ -51,6 +51,7 @@ function overview(url: URL) {
 }
 
 const GEOGRAPHY = {
+  coordinates: "included",
   totals: { countries: 2, cities: 3, sites: 4, sites_with_coordinates: 3, sites_without_coordinates: 1 },
   countries: [
     { id: "ae", name: "UAE", iso_code: "AE", city_count: 2, site_count: 3 },
