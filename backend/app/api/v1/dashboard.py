@@ -7,6 +7,7 @@ everything (§15)."""
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -24,6 +25,7 @@ from app.application.power_capacity import (
     load_power_graph_snapshot,
 )
 from app.application.rbac import require_permission
+from app.core.config import get_settings
 from app.domain.location.models import Building, City, Country, Floor, Room, Site
 from app.domain.physical.models import Equipment, Rack
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
@@ -366,8 +368,9 @@ class GeographyTotalsOut(BaseModel):
     countries: int
     cities: int
     sites: int
-    sites_with_coordinates: int
-    sites_without_coordinates: int
+    # Null when coordinates are withheld: the counts would disclose how many sites have coordinates.
+    sites_with_coordinates: int | None
+    sites_without_coordinates: int | None
 
 
 class GeographyCountryOut(BaseModel):
@@ -396,6 +399,7 @@ class GeographySiteOut(BaseModel):
 
 class GeographyOut(BaseModel):
     totals: GeographyTotalsOut
+    coordinates: Literal["included", "withheld"]
     countries: list[GeographyCountryOut]
     cities: list[GeographyCityOut]
     sites: list[GeographySiteOut]
@@ -409,7 +413,12 @@ async def get_dashboard_geography(
 ) -> GeographyOut:
     """Geographic coverage of the sites the caller may see (location:read is scope-aware). Every count is taken over
     visible sites only, so a hidden site never contributes a city or country. Coordinates are shown only when both
-    are present and in range; nothing is inferred or defaulted."""
+    are present and in range; nothing is inferred or defaulted.
+
+    Precise coordinates are confidential: they are returned only to a caller with an unrestricted scope, or to any
+    caller when the operator set `geography_restricted_coordinates_enabled`. Otherwise `coordinates` is "withheld",
+    every site's latitude/longitude is null and the two coordinate totals are null."""
+    include_coordinates = ctx.scope.unrestricted or get_settings().geography_restricted_coordinates_enabled
     visible = and_(
         site_visible_clause(ctx.scope, Site.id),
         city_visible_clause(ctx.scope, City.id),
@@ -427,17 +436,20 @@ async def get_dashboard_geography(
 
     # Totals and the bounded site list in one statement (one-row aggregate LEFT JOIN the limited list), so
     # `sites_truncated` always agrees with `totals.sites`.
-    totals = visible_sites(
+    # Coordinates (and the count of sites that have them) are not even selected when withheld, so they never leave
+    # the database for a restricted caller unless the operator explicitly enabled it.
+    totals_columns = [
         func.count(func.distinct(Country.id)).label("countries"),
         func.count(func.distinct(City.id)).label("cities"),
         func.count(func.distinct(Site.id)).label("sites"),
-        func.count(func.distinct(Site.id)).filter(has_coordinates).label("with_coordinates"),
-    ).subquery("totals")
+    ]
+    site_columns: list[Any] = [Site.id, Site.code, Site.name, Site.city_id]
+    if include_coordinates:
+        totals_columns.append(func.count(func.distinct(Site.id)).filter(has_coordinates).label("with_coordinates"))
+        site_columns += [Site.latitude, Site.longitude, has_coordinates.label("has_coordinates")]
+    totals = visible_sites(*totals_columns).subquery("totals")
     listed = (
-        visible_sites(
-            Site.id, Site.code, Site.name, Site.city_id, Site.latitude, Site.longitude,
-            has_coordinates.label("has_coordinates"), Country.name.label("country_name"), City.name.label("city_name"),
-        )
+        visible_sites(*site_columns, Country.name.label("country_name"), City.name.label("city_name"))
         .order_by(Country.name, City.name, Site.code, Site.id)
         .limit(MAX_GEOGRAPHY_SITES)
         .subquery("listed")
@@ -454,8 +466,8 @@ async def get_dashboard_geography(
     sites = [
         GeographySiteOut(
             id=row["id"], code=row["code"], name=row["name"], city_id=row["city_id"],
-            latitude=float(row["latitude"]) if row["has_coordinates"] else None,
-            longitude=float(row["longitude"]) if row["has_coordinates"] else None,
+            latitude=float(row["latitude"]) if include_coordinates and row["has_coordinates"] else None,
+            longitude=float(row["longitude"]) if include_coordinates and row["has_coordinates"] else None,
         )
         for row in rows
         if row["id"] is not None
@@ -483,9 +495,10 @@ async def get_dashboard_geography(
     return GeographyOut(
         totals=GeographyTotalsOut(
             countries=head["countries"], cities=head["cities"], sites=head["sites"],
-            sites_with_coordinates=head["with_coordinates"],
-            sites_without_coordinates=head["sites"] - head["with_coordinates"],
+            sites_with_coordinates=head["with_coordinates"] if include_coordinates else None,
+            sites_without_coordinates=head["sites"] - head["with_coordinates"] if include_coordinates else None,
         ),
+        coordinates="included" if include_coordinates else "withheld",
         countries=[
             GeographyCountryOut(id=r.id, name=r.name, iso_code=r.iso_code, city_count=r.city_count, site_count=r.site_count)
             for r in country_rows

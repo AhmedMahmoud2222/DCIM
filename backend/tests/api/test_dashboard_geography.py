@@ -2,6 +2,7 @@
 
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,6 +56,7 @@ async def test_empty(client, admin):
     body = r.json()
     assert body["totals"] == {"countries": 0, "cities": 0, "sites": 0, "sites_with_coordinates": 0, "sites_without_coordinates": 0}
     assert body["countries"] == body["cities"] == body["sites"] == [] and body["sites_truncated"] is False and body["as_of"]
+    assert body["coordinates"] == "included"
 
 
 async def test_distinct_counts_and_coordinate_validity(client, admin, db_session):
@@ -68,6 +70,7 @@ async def test_distinct_counts_and_coordinate_validity(client, admin, db_session
         },
     })
     body = (await client.get(URL, headers=admin)).json()
+    assert body["coordinates"] == "included"
     assert body["totals"] == {"countries": 2, "cities": 3, "sites": 6, "sites_with_coordinates": 2, "sites_without_coordinates": 4}
     assert body["countries"] == [
         {"id": str(ids["Egypt"]), "name": "Egypt", "iso_code": "EG", "city_count": 2, "site_count": 5},
@@ -84,27 +87,85 @@ async def test_distinct_counts_and_coordinate_validity(client, admin, db_session
     assert body["sites_truncated"] is False
 
 
-async def test_restricted_user_sees_only_granted_sites_and_no_other_organization(client, admin, db_session):
-    ids = await _world(db_session, {
-        "OrgA": {"Egypt": {"Cairo": [("A-1", 30, 31), ("A-2", 30.1, 31.1)], "Alexandria": [("A-3", 31.2, 29.9)]}},
-        "OrgB": {"France": {"Paris": [("B-1", 48.8, 2.3)]}},
-    })
+def _enable_restricted_coordinates(monkeypatch):
+    monkeypatch.setattr(dashboard, "get_settings", lambda: SimpleNamespace(geography_restricted_coordinates_enabled=True))
+
+
+RESTRICTED_LAYOUT = {
+    "OrgA": {"Egypt": {"Cairo": [("A-1", 30.0444, 31.2357), ("A-2", 30.1, 31.1)], "Alexandria": [("A-3", 31.2, 29.9)]}},
+    "OrgB": {"France": {"Paris": [("B-1", 48.8, 2.3)]}},
+}
+HIDDEN_NAMES = ("A-2", "A-3", "B-1", "Alexandria", "Paris", "France", "OrgA", "OrgB")
+# Coordinates of the sites the restricted user may not see (none is a substring of 30.0444 / 31.2357).
+HIDDEN_COORDINATES = ("30.1", "31.1", "29.9", "48.8")
+
+
+async def _restricted_to_a1(client, admin, db_session):
+    ids = await _world(db_session, RESTRICTED_LAYOUT)
     gid = await _group(client, admin, allow=["location:read"], sites=[{"site_id": str(ids["A-1"]), "rack_scope": "all"}])
     _, restricted = await _group_user(client, admin, [gid])
+    return ids, restricted
+
+
+def _assert_only_a1_in_scope(r, ids):
+    body = r.json()
+    assert body["totals"]["countries"] == 1 and body["totals"]["cities"] == 1 and body["totals"]["sites"] == 1
+    assert body["countries"] == [{"id": str(ids["Egypt"]), "name": "Egypt", "iso_code": "EG", "city_count": 1, "site_count": 1}]
+    assert body["cities"] == [{"id": str(ids["Cairo"]), "country_id": str(ids["Egypt"]), "name": "Cairo", "site_count": 1}]
+    assert [s["id"] for s in body["sites"]] == [str(ids["A-1"])]
+    # as_of is removed so a timestamp can never collide with a coordinate substring.
+    text = r.text.replace(body["as_of"], "")
+    for hidden in HIDDEN_NAMES + HIDDEN_COORDINATES:
+        assert hidden not in text
+
+
+async def test_restricted_user_sees_only_granted_sites_and_no_other_organization(client, admin, db_session):
+    ids, restricted = await _restricted_to_a1(client, admin, db_session)
+
+    r = await client.get(URL, headers=restricted)
+    assert r.status_code == 200, r.text
+    _assert_only_a1_in_scope(r, ids)
+
+    full = (await client.get(URL, headers=admin)).json()
+    assert full["totals"]["sites"] == 4 and full["totals"]["countries"] == 2 and full["totals"]["cities"] == 3
+
+
+async def test_unrestricted_admin_gets_coordinates(client, admin, db_session):
+    await _world(db_session, RESTRICTED_LAYOUT)
+    body = (await client.get(URL, headers=admin)).json()
+    assert body["coordinates"] == "included"
+    assert body["totals"]["sites_with_coordinates"] == 4 and body["totals"]["sites_without_coordinates"] == 0
+    coords = {s["code"]: (s["latitude"], s["longitude"]) for s in body["sites"]}
+    assert coords["A-1"] == (30.0444, 31.2357) and coords["B-1"] == (48.8, 2.3)
+
+
+async def test_restricted_user_gets_coordinates_withheld_by_default(client, admin, db_session):
+    ids, restricted = await _restricted_to_a1(client, admin, db_session)
 
     r = await client.get(URL, headers=restricted)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["totals"] == {"countries": 1, "cities": 1, "sites": 1, "sites_with_coordinates": 1, "sites_without_coordinates": 0}
-    assert body["countries"] == [{"id": str(ids["Egypt"]), "name": "Egypt", "iso_code": "EG", "city_count": 1, "site_count": 1}]
-    assert body["cities"] == [{"id": str(ids["Cairo"]), "country_id": str(ids["Egypt"]), "name": "Cairo", "site_count": 1}]
-    assert [s["id"] for s in body["sites"]] == [str(ids["A-1"])]
-    text = r.text
-    for hidden in ("A-2", "A-3", "B-1", "Alexandria", "Paris", "France", "OrgA", "OrgB"):
-        assert hidden not in text
+    assert body["coordinates"] == "withheld"
+    assert body["totals"] == {"countries": 1, "cities": 1, "sites": 1, "sites_with_coordinates": None, "sites_without_coordinates": None}
+    assert [(s["latitude"], s["longitude"]) for s in body["sites"]] == [(None, None)]
+    text = r.text.replace(body["as_of"], "")
+    for digits in ("30.0444", "31.2357", "0444", "2357"):
+        assert digits not in text
+    _assert_only_a1_in_scope(r, ids)
 
-    full = (await client.get(URL, headers=admin)).json()
-    assert full["totals"]["sites"] == 4 and full["totals"]["countries"] == 2 and full["totals"]["cities"] == 3
+
+async def test_restricted_user_gets_in_scope_coordinates_when_operator_enables_them(client, admin, db_session, monkeypatch):
+    ids, restricted = await _restricted_to_a1(client, admin, db_session)
+    _enable_restricted_coordinates(monkeypatch)
+
+    r = await client.get(URL, headers=restricted)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["coordinates"] == "included"
+    assert body["totals"] == {"countries": 1, "cities": 1, "sites": 1, "sites_with_coordinates": 1, "sites_without_coordinates": 0}
+    assert [(s["code"], s["latitude"], s["longitude"]) for s in body["sites"]] == [("A-1", 30.0444, 31.2357)]
+    # Enabling coordinates never widens scope: hidden sites, cities, countries and their coordinates stay absent.
+    _assert_only_a1_in_scope(r, ids)
 
 
 async def test_requires_location_read(client, admin, db_session):
@@ -133,13 +194,17 @@ async def _scoped_ids(client, headers, path):
     return {item["id"] for item in response.json()["items"]}
 
 
+@pytest.mark.parametrize("coordinates_enabled", [False, True])
 @pytest.mark.parametrize("grants", ["all", "selected_without_racks", "none"])
 async def test_geography_reaches_exactly_the_entities_the_existing_scoped_location_routes_reach(
-    client, admin, db_session, grants
+    client, admin, db_session, monkeypatch, grants, coordinates_enabled
 ):
     """Independent authorization check for the scope-aware route inventory (test_user_groups_authz): whatever
     scope a caller holds, geography must expose the same sites, cities and countries as GET /sites, /cities and
-    /countries, which are already reviewed. It may add coordinates for those sites, never another entity."""
+    /countries, which are already reviewed. It may add coordinates for those sites (for a restricted scope only when
+    the operator enabled them), never another entity; the setting never changes which entities are returned."""
+    if coordinates_enabled:
+        _enable_restricted_coordinates(monkeypatch)
     ids = await _world(db_session, {
         "OrgA": {"Egypt": {"Cairo": [("A-1", 30, 31), ("A-2", 30.1, 31.1)], "Alexandria": [("A-3", 31.2, 29.9)]}},
         "OrgB": {"France": {"Paris": [("B-1", 48.8, 2.3)]}},
@@ -153,6 +218,9 @@ async def test_geography_reaches_exactly_the_entities_the_existing_scoped_locati
     _, headers = await _group_user(client, admin, [gid])
 
     geography = (await client.get(URL, headers=headers)).json()
+    assert geography["coordinates"] == ("included" if coordinates_enabled else "withheld")
+    if not coordinates_enabled:
+        assert all(s["latitude"] is None and s["longitude"] is None for s in geography["sites"])
     assert {s["id"] for s in geography["sites"]} == await _scoped_ids(client, headers, "sites")
     assert {c["id"] for c in geography["cities"]} == await _scoped_ids(client, headers, "cities")
     assert {c["id"] for c in geography["countries"]} == await _scoped_ids(client, headers, "countries")
@@ -165,8 +233,9 @@ async def test_geography_reaches_exactly_the_entities_the_existing_scoped_locati
         by_city[site["city_id"]] = by_city.get(site["city_id"], 0) + 1
     assert {c["id"]: c["site_count"] for c in geography["cities"]} == by_city
     if grants == "none":
+        empty = 0 if coordinates_enabled else None
         assert geography["totals"] == {
-            "countries": 0, "cities": 0, "sites": 0, "sites_with_coordinates": 0, "sites_without_coordinates": 0,
+            "countries": 0, "cities": 0, "sites": 0, "sites_with_coordinates": empty, "sites_without_coordinates": empty,
         }
 
 
