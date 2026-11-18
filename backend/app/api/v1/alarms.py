@@ -9,16 +9,20 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import AwareDatetime, BaseModel, Field, field_validator
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.api.deps import get_db
+from app.application.access_control import AccessScope, equipment_visible_clause, rack_visible_clause
 from app.application.alarm_service import acknowledge_alarm, disable_rule, resolve_rule_unit, rule_unit_status, update_rule
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
 from app.domain.alarm.models import ALARM_STATUSES, DEFAULT_ALARM_SEVERITY, RULE_TYPES, Alarm, AlarmRule
+from app.domain.identity.models import ManagedAsset
 from app.domain.telemetry.models import TelemetryReading
 from app.domain.telemetry.registry import REGISTRY_VERSION, convert_to_presentation, registry_snapshot, validate_metric_rule
 
@@ -124,6 +128,49 @@ class AlarmOut(BaseModel):
 class AlarmHistoryPage(BaseModel):
     items: list[AlarmOut]
     next_cursor: str | None = None
+
+
+AlarmSeverity = Literal["critical", "warning", "info"]
+OVERVIEW_DEFAULT_LIMIT = 7
+OVERVIEW_MAX_LIMIT = 50
+
+
+class AlarmOverviewScopeOut(BaseModel):
+    include_acknowledged: bool
+    severity: AlarmSeverity | None
+
+
+class AlarmSeverityCountsOut(BaseModel):
+    critical: int
+    warning: int
+    info: int
+    total: int
+
+
+class AlarmOverviewOut(BaseModel):
+    scope: AlarmOverviewScopeOut
+    counts: AlarmSeverityCountsOut
+    items: list[AlarmOut]
+    matching_total: int
+    limit: int
+    truncated: bool
+    as_of: datetime
+
+
+def alarm_visible_clause(scope: AccessScope) -> ColumnElement[bool]:
+    """Defence in depth: alarm:read is not scope-aware today (restricted callers get 403), but should it become so, a
+    restricted caller sees only alarms whose managed asset is visible equipment or a visible rack, exactly as
+    GET /managed-assets resolves them. Alarms without a managed asset are hidden from restricted callers
+    (`NULL IN (...)` is never true)."""
+    if scope.unrestricted:
+        return true()
+    visible_assets = select(ManagedAsset.id).where(
+        or_(
+            and_(ManagedAsset.asset_type == "equipment", equipment_visible_clause(scope, ManagedAsset.id)),
+            and_(ManagedAsset.asset_type == "rack", rack_visible_clause(scope, ManagedAsset.id)),
+        )
+    )
+    return Alarm.managed_asset_id.in_(visible_assets)
 
 
 @router.post("/rules", status_code=201)
@@ -341,6 +388,55 @@ async def alarm_history(
     page, has_more = rows[:limit], len(rows) > limit
     next_cursor = _encode_cursor(page[-1]) if has_more and page else None
     return AlarmHistoryPage(items=[_out(row) for row in page], next_cursor=next_cursor)
+
+
+@router.get("/overview", response_model=AlarmOverviewOut)
+async def alarm_overview(
+    severity: AlarmSeverity | None = Query(default=None),
+    include_acknowledged: bool = False,
+    limit: int = Query(default=OVERVIEW_DEFAULT_LIMIT, ge=1, le=OVERVIEW_MAX_LIMIT),
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("alarm:read")),
+) -> AlarmOverviewOut:
+    """Exact per-severity counts for the acknowledgement scope plus the newest `limit` alarms matching `severity`.
+
+    Counts never depend on `severity` or `limit`. Counts, `matching_total` and items come from ONE statement (a
+    one-row aggregate LEFT JOINed to the limited item subquery), so they share a snapshot and cannot disagree."""
+    statuses = ("ACTIVE", "ACKNOWLEDGED") if include_acknowledged else ("ACTIVE",)
+    in_scope = and_(Alarm.status.in_(statuses), alarm_visible_clause(ctx.scope))
+    matches = Alarm.severity == severity if severity is not None else true()
+    counts = (
+        select(
+            func.count().filter(Alarm.severity == "critical").label("critical"),
+            func.count().filter(Alarm.severity == "warning").label("warning"),
+            func.count().filter(Alarm.severity == "info").label("info"),
+            func.count().filter(matches).label("matching"),
+        )
+        .where(in_scope)
+        .subquery("counts")
+    )
+    items = (
+        select(Alarm).where(in_scope, matches).order_by(Alarm.opened_at.desc(), Alarm.id.desc()).limit(limit).subquery("items")
+    )
+    item = aliased(Alarm, items)
+    stmt = (
+        select(counts.c.critical, counts.c.warning, counts.c.info, counts.c.matching, item)
+        .select_from(counts)
+        .outerjoin(items, true())
+        .order_by(item.opened_at.desc(), item.id.desc())
+    )
+    rows = (await db.execute(stmt)).all()
+    critical, warning, info, matching = rows[0][:4]
+    alarms = [row[4] for row in rows if row[4] is not None]
+    return AlarmOverviewOut(
+        scope=AlarmOverviewScopeOut(include_acknowledged=include_acknowledged, severity=severity),
+        counts=AlarmSeverityCountsOut(critical=critical, warning=warning, info=info, total=critical + warning + info),
+        items=[_out(row) for row in alarms],
+        matching_total=matching,
+        limit=limit,
+        truncated=matching > len(alarms),
+        as_of=datetime.now(UTC),
+    )
 
 
 @router.post("/{alarm_id}/acknowledge", response_model=AlarmOut)

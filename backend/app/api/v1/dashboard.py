@@ -6,13 +6,15 @@ everything (§15)."""
 
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.application.access_control import city_visible_clause, country_visible_clause, site_visible_clause
 from app.application.power_capacity import (
     classify_equipment_redundancy_from_snapshot,
     derive_node_capacity_exceptions,
@@ -22,7 +24,7 @@ from app.application.power_capacity import (
     load_power_graph_snapshot,
 )
 from app.application.rbac import require_permission
-from app.domain.location.models import Building, Floor, Room, Site
+from app.domain.location.models import Building, City, Country, Floor, Room, Site
 from app.domain.physical.models import Equipment, Rack
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 from app.domain.power.models import PowerCapacity, PowerNode
@@ -355,3 +357,141 @@ async def get_dashboard_exceptions(
                 )
             )
     return out
+
+
+MAX_GEOGRAPHY_SITES = 2000
+
+
+class GeographyTotalsOut(BaseModel):
+    countries: int
+    cities: int
+    sites: int
+    sites_with_coordinates: int
+    sites_without_coordinates: int
+
+
+class GeographyCountryOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    iso_code: str | None
+    city_count: int
+    site_count: int
+
+
+class GeographyCityOut(BaseModel):
+    id: uuid.UUID
+    country_id: uuid.UUID
+    name: str
+    site_count: int
+
+
+class GeographySiteOut(BaseModel):
+    id: uuid.UUID
+    code: str
+    name: str
+    city_id: uuid.UUID
+    latitude: float | None
+    longitude: float | None
+
+
+class GeographyOut(BaseModel):
+    totals: GeographyTotalsOut
+    countries: list[GeographyCountryOut]
+    cities: list[GeographyCityOut]
+    sites: list[GeographySiteOut]
+    sites_truncated: bool
+    as_of: datetime
+
+
+@router.get("/geography", response_model=GeographyOut)
+async def get_dashboard_geography(
+    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("location:read")),
+) -> GeographyOut:
+    """Geographic coverage of the sites the caller may see (location:read is scope-aware). Every count is taken over
+    visible sites only, so a hidden site never contributes a city or country. Coordinates are shown only when both
+    are present and in range; nothing is inferred or defaulted."""
+    visible = and_(
+        site_visible_clause(ctx.scope, Site.id),
+        city_visible_clause(ctx.scope, City.id),
+        country_visible_clause(ctx.scope, Country.id),
+    )
+    has_coordinates = and_(
+        Site.latitude.isnot(None), Site.longitude.isnot(None),
+        Site.latitude.between(-90, 90), Site.longitude.between(-180, 180),
+    )
+
+    def visible_sites(*columns):
+        return select(*columns).select_from(Site).join(City, City.id == Site.city_id).join(
+            Country, Country.id == City.country_id
+        ).where(visible)
+
+    # Totals and the bounded site list in one statement (one-row aggregate LEFT JOIN the limited list), so
+    # `sites_truncated` always agrees with `totals.sites`.
+    totals = visible_sites(
+        func.count(func.distinct(Country.id)).label("countries"),
+        func.count(func.distinct(City.id)).label("cities"),
+        func.count(func.distinct(Site.id)).label("sites"),
+        func.count(func.distinct(Site.id)).filter(has_coordinates).label("with_coordinates"),
+    ).subquery("totals")
+    listed = (
+        visible_sites(
+            Site.id, Site.code, Site.name, Site.city_id, Site.latitude, Site.longitude,
+            has_coordinates.label("has_coordinates"), Country.name.label("country_name"), City.name.label("city_name"),
+        )
+        .order_by(Country.name, City.name, Site.code, Site.id)
+        .limit(MAX_GEOGRAPHY_SITES)
+        .subquery("listed")
+    )
+    rows = (
+        await db.execute(
+            select(totals, listed)
+            .select_from(totals)
+            .outerjoin(listed, true())
+            .order_by(listed.c.country_name, listed.c.city_name, listed.c.code, listed.c.id)
+        )
+    ).mappings().all()
+    head = rows[0]
+    sites = [
+        GeographySiteOut(
+            id=row["id"], code=row["code"], name=row["name"], city_id=row["city_id"],
+            latitude=float(row["latitude"]) if row["has_coordinates"] else None,
+            longitude=float(row["longitude"]) if row["has_coordinates"] else None,
+        )
+        for row in rows
+        if row["id"] is not None
+    ]
+
+    city_rows = (
+        await db.execute(
+            visible_sites(City.id, City.country_id, City.name, func.count(func.distinct(Site.id)).label("site_count"))
+            .group_by(City.id, City.country_id, City.name)
+            .order_by(City.name, City.id)
+        )
+    ).all()
+    country_rows = (
+        await db.execute(
+            visible_sites(
+                Country.id, Country.name, Country.iso_code,
+                func.count(func.distinct(City.id)).label("city_count"),
+                func.count(func.distinct(Site.id)).label("site_count"),
+            )
+            .group_by(Country.id, Country.name, Country.iso_code)
+            .order_by(Country.name, Country.id)
+        )
+    ).all()
+
+    return GeographyOut(
+        totals=GeographyTotalsOut(
+            countries=head["countries"], cities=head["cities"], sites=head["sites"],
+            sites_with_coordinates=head["with_coordinates"],
+            sites_without_coordinates=head["sites"] - head["with_coordinates"],
+        ),
+        countries=[
+            GeographyCountryOut(id=r.id, name=r.name, iso_code=r.iso_code, city_count=r.city_count, site_count=r.site_count)
+            for r in country_rows
+        ],
+        cities=[GeographyCityOut(id=r.id, country_id=r.country_id, name=r.name, site_count=r.site_count) for r in city_rows],
+        sites=sites,
+        sites_truncated=head["sites"] > len(sites),
+        as_of=datetime.now(UTC),
+    )
