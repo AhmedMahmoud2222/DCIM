@@ -2,12 +2,18 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useLocation } from "react-router-dom";
+
+import { getDashboardExceptions } from "@/features/power/api";
 import { EventsPage } from "@/features/telemetry/EventsPage";
 import * as api from "@/features/telemetry/api";
 import type { Alarm } from "@/features/telemetry/api";
+import type { CurrentUser } from "@/lib/authStore";
 import { renderWithProviders } from "@/test/renderWithProviders";
+import type { DashboardExceptionItem } from "@/types";
 
 vi.mock("@/features/telemetry/api");
+vi.mock("@/features/power/api");
 
 const activeAlarm: Alarm = {
   id: "alarm-1",
@@ -176,4 +182,103 @@ describe("EventsPage", () => {
     }
   });
 
+});
+
+describe("EventsPage Infrastructure tab", () => {
+  const INFRA_USER: CurrentUser = { id: "u", email: "u@example.test", full_name: "U", role_names: [], permission_codes: ["alarm:read", "dashboard:read"] };
+  const exceptions: DashboardExceptionItem[] = [
+    { code: "POWER_PATH_MISSING", severity: "info", object_type: "equipment", object_id: "eq-3", message: "No power path" },
+    { code: "NODE_OVERLOADED", severity: "critical", object_type: "power_node", object_id: "pn-1", message: "PDU A over capacity" },
+    { code: "REDUNDANCY_DEGRADED", severity: "warning", object_type: "equipment", object_id: "eq-9", message: "Single feed" },
+  ];
+
+  function LocationProbe() {
+    const location = useLocation();
+    return <output data-testid="location">{`${location.pathname}${location.search}`}</output>;
+  }
+
+  beforeEach(() => {
+    vi.mocked(api.getOpenAlarms).mockImplementation(async (status?: "ACTIVE" | "ACKNOWLEDGED") => (status === "ACTIVE" ? [activeAlarm] : []));
+    vi.mocked(api.listAlarmHistory).mockResolvedValue({ items: [], next_cursor: null });
+    vi.mocked(getDashboardExceptions).mockResolvedValue(exceptions);
+  });
+
+  it("opens from ?view=infrastructure and lists every exception, most severe first, with its drill-down", async () => {
+    renderWithProviders(<EventsPage />, { route: "/events?view=infrastructure", user: INFRA_USER });
+
+    expect(screen.getByRole("tab", { name: "Infrastructure" })).toHaveAttribute("aria-selected", "true");
+    const table = await screen.findByRole("table", { name: "Infrastructure exceptions" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows.map((row) => within(row).getAllByRole("cell")[1].textContent)).toEqual(["NODE_OVERLOADED", "REDUNDANCY_DEGRADED", "POWER_PATH_MISSING"]);
+    expect(within(rows[0]).getByText("Critical")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("Power node")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("PDU A over capacity")).toBeInTheDocument();
+    expect(within(rows[0]).getByRole("link", { name: /Inspect NODE_OVERLOADED/ })).toHaveAttribute("href", "/power");
+    expect(within(rows[1]).getByRole("link", { name: /Inspect REDUNDANCY_DEGRADED/ })).toHaveAttribute("href", "/equipment/eq-9");
+    // Exceptions are not alarms: no workflow status, and the alarm export is off on this tab.
+    expect(table).not.toHaveTextContent(/ACTIVE|ACKNOWLEDGED/);
+    expect(screen.getByRole("button", { name: "Export current results CSV" })).toBeDisabled();
+    expect(screen.queryByLabelText("Search events")).not.toBeVisible();
+  });
+
+  it("filters by severity with counts from the full list", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<EventsPage />, { route: "/events?view=infrastructure", user: INFRA_USER });
+    const table = await screen.findByRole("table", { name: "Infrastructure exceptions" });
+
+    expect(screen.getByRole("radio", { name: "All (3)" })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Warning (1)" }));
+    expect(within(table).getAllByRole("row").slice(1)).toHaveLength(1);
+    expect(within(table).getByText("REDUNDANCY_DEGRADED")).toBeInTheDocument();
+  });
+
+  it("writes the tab into the URL and keeps the existing tabs working", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <>
+        <EventsPage />
+        <LocationProbe />
+      </>,
+      { route: "/events", user: INFRA_USER },
+    );
+    await screen.findByRole("table", { name: "Events" });
+    await user.click(screen.getByRole("tab", { name: "Infrastructure" }));
+    expect(screen.getByTestId("location")).toHaveTextContent("/events?view=infrastructure");
+    await screen.findByRole("table", { name: "Infrastructure exceptions" });
+
+    await user.click(screen.getByRole("tab", { name: /Active/ }));
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/events$/);
+    expect(await screen.findByRole("table", { name: "Events" })).toBeInTheDocument();
+    expect(screen.queryByTestId("infrastructure-view")).not.toBeInTheDocument();
+  });
+
+  it("is Access restricted without a request when dashboard:read is missing", async () => {
+    renderWithProviders(<EventsPage />, { route: "/events?view=infrastructure", user: { ...INFRA_USER, permission_codes: ["alarm:read"] } });
+
+    expect(await screen.findByRole("heading", { name: "Access restricted" })).toBeInTheDocument();
+    expect(screen.getByText("dashboard:read")).toBeInTheDocument();
+    expect(getDashboardExceptions).not.toHaveBeenCalled();
+  });
+
+  it("shows an error with a retry, and an empty message only after a successful empty response", async () => {
+    vi.mocked(getDashboardExceptions).mockRejectedValue(new Error("Upstream timed out"));
+    const user = userEvent.setup();
+    renderWithProviders(<EventsPage />, { route: "/events?view=infrastructure", user: INFRA_USER });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Upstream timed out");
+    expect(screen.queryByTestId("infrastructure-empty")).not.toBeInTheDocument();
+
+    vi.mocked(getDashboardExceptions).mockResolvedValue([]);
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByTestId("infrastructure-empty")).toHaveTextContent("No capacity or topology exceptions detected.");
+  });
+
+  it("shows a loading status while the request is in flight", async () => {
+    vi.mocked(getDashboardExceptions).mockReturnValue(new Promise(() => undefined));
+    renderWithProviders(<EventsPage />, { route: "/events?view=infrastructure", user: INFRA_USER });
+
+    await waitFor(() => expect(screen.getByTestId("infrastructure-view").querySelector("[aria-busy='true'], [role='status']")).not.toBeNull());
+    expect(screen.queryByTestId("infrastructure-empty")).not.toBeInTheDocument();
+  });
 });

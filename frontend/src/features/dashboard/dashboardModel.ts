@@ -1,6 +1,6 @@
 import type { CurrentUser } from "@/lib/authStore";
 import type { Collector, DashboardExceptionItem } from "@/types";
-import type { Alarm } from "@/features/telemetry/api";
+import type { AlarmOverview, AlarmSeverity } from "@/features/telemetry/api";
 
 /** What the browser already knows about the signed-in user's right to read a dashboard source.
  * `unknown` is only the moment before the profile has loaded; it must read as loading, never as
@@ -13,28 +13,34 @@ export function accessFor(user: CurrentUser | null, permission: string): Access 
   return user.permission_codes.includes(permission) ? "granted" : "denied";
 }
 
-/** Permission each dashboard source needs; these mirror the backend routes (`/dashboard/*` needs
- * dashboard:read, `/alarms` alarm:read, `/collectors` collector:read). */
+/** Permission each dashboard source needs; these mirror the backend routes (`/dashboard/exceptions` and
+ * `/dashboard/summary` need dashboard:read, `/dashboard/geography` location:read, `/alarms/overview`
+ * alarm:read, `/collectors` collector:read). */
 export const DASHBOARD_PERMISSIONS = {
   alarms: "alarm:read",
+  geography: "location:read",
   exceptions: "dashboard:read",
   collectors: "collector:read",
   inventory: "dashboard:read",
 } as const;
 
-/** How many alarms one request asks for. A list that reaches this size may be cut short, so its count
- * is shown as "N or more" instead of as an exact total. */
-export const ALARM_LIST_LIMIT = 100;
+// --- Alarms -----------------------------------------------------------------------------------
+export const ALARM_SEVERITIES: ReadonlyArray<AlarmSeverity> = ["critical", "warning", "info"];
+export type SeverityFilter = "all" | AlarmSeverity;
 
-export function countLabel(count: number, limit: number): string {
-  return count >= limit ? `${limit} or more` : String(count);
+export function isKnownSeverity(value: unknown): value is AlarmSeverity {
+  return typeof value === "string" && (ALARM_SEVERITIES as ReadonlyArray<string>).includes(value);
 }
 
-// --- Alarms -----------------------------------------------------------------------------------
-/** Newest first. The alarm record carries no severity, so recency is the only ordering that does not
- * invent importance. */
-export function sortAlarmsNewestFirst(alarms: ReadonlyArray<Alarm>): Alarm[] {
-  return [...alarms].sort((a, b) => Date.parse(b.opened_at) - Date.parse(a.opened_at) || 0);
+/** Alarms the server counted in `total` under a severity this build does not know. Never negative. */
+export function unrecognisedAlarmCount(counts: AlarmOverview["counts"]): number {
+  return Math.max(0, counts.total - counts.critical - counts.warning - counts.info);
+}
+
+/** The counter button and the severity selector are one control: picking the active severity again
+ * returns to All. */
+export function toggleSeverity(current: SeverityFilter, picked: AlarmSeverity): SeverityFilter {
+  return current === picked ? "all" : picked;
 }
 
 // --- Exceptions -------------------------------------------------------------------------------
@@ -67,6 +73,35 @@ export function severityCounts(items: ReadonlyArray<DashboardExceptionItem>): Se
     else counts.unrecognised += 1;
   }
   return counts;
+}
+
+/** How many exceptions the dashboard preview lists; the full list lives in Events → Infrastructure. */
+export const EXCEPTION_PREVIEW_LIMIT = 3;
+
+export interface ExceptionPreview {
+  shown: DashboardExceptionItem[];
+  hidden: number;
+  hiddenCritical: number;
+  counts: SeverityCounts;
+}
+
+/** The most severe `limit` exceptions, with counts taken from the whole list, never from the preview. */
+export function exceptionPreview(items: ReadonlyArray<DashboardExceptionItem>, limit = EXCEPTION_PREVIEW_LIMIT): ExceptionPreview {
+  const sorted = sortExceptionsBySeverity(items);
+  const rest = sorted.slice(limit);
+  return {
+    shown: sorted.slice(0, limit),
+    hidden: rest.length,
+    hiddenCritical: rest.filter((item) => item.severity === "critical").length,
+    counts: severityCounts(items),
+  };
+}
+
+/** Where an exception is inspected. Equipment exceptions open the equipment; power-node exceptions and
+ * any object type this build does not know open the power topology, as the dashboard always did. */
+export function exceptionHref(item: Pick<DashboardExceptionItem, "object_type" | "object_id">): string {
+  if (item.object_type === "equipment" && item.object_id) return `/equipment/${encodeURIComponent(item.object_id)}`;
+  return "/power";
 }
 
 // --- Collector connectivity -------------------------------------------------------------------
