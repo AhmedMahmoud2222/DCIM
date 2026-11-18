@@ -1,0 +1,69 @@
+{
+  "run_id": "full-2026-11-19-0100",
+  "mode": "FULL",
+  "started_at": "2026-11-18T21:00:13Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; operating policy read; ruleset checked; six open PRs"
+    },
+    {
+      "step": 1,
+      "result": "Enumerated six open PRs and 18 open issues; required checks read on all six"
+    },
+    {
+      "step": 2,
+      "result": "No code-fix claims independently verified; blocked on complete diff inspection"
+    },
+    {
+      "step": 3,
+      "result": "Security PRs prioritized; no agent asks issued"
+    },
+    {
+      "step": 4,
+      "result": "Thread resolution not performed; no unverified resolution"
+    },
+    {
+      "step": "4a",
+      "result": "Existing findings not modified"
+    },
+    {
+      "step": 5,
+      "result": "Five PRs have failing required CI; #362 green but Draft; #363 green but blocked and workflow/class I"
+    },
+    {
+      "step": 6,
+      "result": "No historical closures without file comparison"
+    },
+    {
+      "step": 7,
+      "result": "No stale reminders without full ask audit"
+    },
+    {
+      "step": 8,
+      "result": "Zero merges; no PR verified through all gates"
+    },
+    {
+      "step": 9,
+      "result": "No new owner decision queued"
+    },
+    {
+      "step": 10,
+      "result": "Report produced; incomplete review/thread and CI root-cause audit disclosed"
+    }
+  ],
+  "merged": [],
+  "ruleset_bypass_modes": [
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request"
+  ],
+  "production_hold_214": "intact",
+  "limitations": [
+    "Full thread inventory and CI job logs not completed",
+    "No agent comments posted"
+  ]
+}
