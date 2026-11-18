@@ -114,7 +114,9 @@ async function rejected(bundled: () => Promise<unknown>, reason: string, customV
 }
 
 export async function loadBasemap({ fetchImpl, bundled = importBundled }: LoadBasemapOptions = {}): Promise<BasemapResult> {
-  const doFetch: FetchImpl = fetchImpl ?? ((input, init) => fetch(input, init));
+  // The platform fetch itself, not a wrapper that forwards a caller-supplied URL. Only MANIFEST_URL (a constant) and the
+  // path returned by overrideFileUrl (same origin, directly inside /map-data/) are ever passed to it below.
+  const doFetch: FetchImpl = fetchImpl ?? globalThis.fetch.bind(globalThis);
 
   // Step 1: is there an override at all? Missing, unreachable or not JSON (the SPA's index.html) is silent.
   let manifestResponse: Response;
