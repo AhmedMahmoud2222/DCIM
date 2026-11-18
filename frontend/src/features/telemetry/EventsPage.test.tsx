@@ -282,3 +282,51 @@ describe("EventsPage Infrastructure tab", () => {
     expect(screen.queryByTestId("infrastructure-empty")).not.toBeInTheDocument();
   });
 });
+
+describe("EventsPage detail aside: managed asset reference", () => {
+  const ID = "9f8e7d6c-0000-4000-8000-000000000000";
+  const ASSET_READER: CurrentUser = { id: "u", email: "u@example.test", full_name: "U", role_names: [], permission_codes: ["alarm:read", "equipment:read", "rack:read"] };
+  const aside = () => screen.getByText("Event detail").closest("aside") as HTMLElement;
+
+  async function renderWith(extra: Partial<Alarm>, user: CurrentUser = ASSET_READER) {
+    vi.mocked(api.getOpenAlarms).mockImplementation(async (status?: "ACTIVE" | "ACKNOWLEDGED") =>
+      status === "ACTIVE" ? [{ ...activeAlarm, managed_asset_id: ID, ...extra }] : [],
+    );
+    vi.mocked(api.listAlarmHistory).mockResolvedValue({ items: [], next_cursor: null });
+    renderWithProviders(<EventsPage />, { user });
+    await screen.findByText("Event detail");
+  }
+
+  it("links equipment to its equipment page", async () => {
+    await renderWith({ managed_asset_type: "equipment" });
+    expect(within(aside()).getByRole("link", { name: "Open equipment for rack-3.power.utilization" })).toHaveAttribute("href", `/equipment/${ID}`);
+  });
+
+  it("links a rack to its rack page", async () => {
+    await renderWith({ managed_asset_type: "rack" });
+    expect(within(aside()).getByRole("link", { name: "Open rack for rack-3.power.utilization" })).toHaveAttribute("href", `/racks/${ID}`);
+    expect(within(aside()).queryByRole("link", { name: /equipment/i })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["pdu", "PDU asset 9f8e7d6c"],
+    [null, "Asset 9f8e7d6c"],
+    ["cable", "Cable asset 9f8e7d6c"],
+  ])("shows a non-link reference for type %s", async (type, label) => {
+    await renderWith({ managed_asset_type: type });
+    expect(within(aside()).getByText(`Affected asset: ${label}`)).toBeInTheDocument();
+    expect(within(aside()).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("shows a non-link reference when the user lacks the page's permission", async () => {
+    await renderWith({ managed_asset_type: "equipment" }, { ...ASSET_READER, permission_codes: ["alarm:read", "rack:read"] });
+    expect(within(aside()).getByText("Affected asset: Equipment asset 9f8e7d6c")).toBeInTheDocument();
+    expect(within(aside()).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("shows nothing for an alarm without a managed asset", async () => {
+    await renderWith({ managed_asset_id: null, managed_asset_type: null });
+    expect(within(aside()).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(aside()).queryByText(/Affected asset/)).not.toBeInTheDocument();
+  });
+});

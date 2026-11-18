@@ -1,6 +1,6 @@
 import type { CurrentUser } from "@/lib/authStore";
 import type { Collector, DashboardExceptionItem } from "@/types";
-import type { AlarmOverview, AlarmSeverity } from "@/features/telemetry/api";
+import type { Alarm, AlarmOverview, AlarmSeverity } from "@/features/telemetry/api";
 
 /** What the browser already knows about the signed-in user's right to read a dashboard source.
  * `unknown` is only the moment before the profile has loaded; it must read as loading, never as
@@ -41,6 +41,48 @@ export function unrecognisedAlarmCount(counts: AlarmOverview["counts"]): number 
  * returns to All. */
 export function toggleSeverity(current: SeverityFilter, picked: AlarmSeverity): SeverityFilter {
   return current === picked ? "all" : picked;
+}
+
+/** Readable names of the backend's managed-asset types (`ManagedAsset.asset_type`). */
+const ASSET_TYPE_LABEL: Record<string, string> = {
+  rack: "Rack",
+  equipment: "Equipment",
+  pdu: "PDU",
+  ups: "UPS",
+  generator: "Generator",
+  power_panel: "Power panel",
+  sensor: "Sensor",
+  cable: "Cable",
+  crac: "CRAC",
+  crah: "CRAH",
+  chiller: "Chiller",
+};
+
+/** Asset types that have a detail page, with the permission that page needs. */
+const ASSET_DETAIL_ROUTE: Record<string, { path: string; permission: string }> = {
+  equipment: { path: "/equipment", permission: "equipment:read" },
+  rack: { path: "/racks", permission: "rack:read" },
+};
+
+export type AlarmAssetTarget = { kind: "link"; to: string; label: string } | { kind: "text"; label: string };
+
+/** Where an alarm's managed asset is opened. Only equipment and racks have detail pages, and only for a user
+ * holding the page's read permission; anything else, including an asset type the server did not send, is a
+ * plain reference and never a guessed link. Alarms without a managed asset have no target. */
+export function alarmAssetTarget(
+  alarm: Pick<Alarm, "managed_asset_id" | "managed_asset_type">,
+  permissionCodes: ReadonlyArray<string> | null | undefined,
+): AlarmAssetTarget | null {
+  const id = alarm.managed_asset_id;
+  if (!id) return null;
+  const type = alarm.managed_asset_type ?? "";
+  const known = Object.prototype.hasOwnProperty.call(ASSET_TYPE_LABEL, type);
+  const route = Object.prototype.hasOwnProperty.call(ASSET_DETAIL_ROUTE, type) ? ASSET_DETAIL_ROUTE[type] : null;
+  if (route && permissionCodes?.includes(route.permission)) {
+    return { kind: "link", to: `${route.path}/${encodeURIComponent(id)}`, label: ASSET_TYPE_LABEL[type] };
+  }
+  const short = id.slice(0, 8);
+  return { kind: "text", label: known ? `${ASSET_TYPE_LABEL[type]} asset ${short}` : `Asset ${short}` };
 }
 
 // --- Exceptions -------------------------------------------------------------------------------

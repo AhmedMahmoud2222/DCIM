@@ -328,6 +328,7 @@ const FIXTURE_ALARMS = Array.from({ length: 4 }, (_, index) => ({
   rule_id: "rule-1",
   integration_id: "integration-1",
   managed_asset_id: `eq-${index}`,
+  managed_asset_type: "equipment",
   subject_key: `PDU-${LONG}-${index} · branch current`,
   status: index === 3 ? "ACKNOWLEDGED" : "ACTIVE",
   severity: ["critical", "warning", "info", "warning"][index],

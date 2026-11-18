@@ -2,9 +2,11 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { useAuth } from "@/features/auth/useAuth";
 import {
   Access,
   ALARM_SEVERITIES,
+  alarmAssetTarget,
   DASHBOARD_PERMISSIONS,
   isKnownSeverity,
   SeverityFilter,
@@ -40,6 +42,8 @@ function presentedValue(alarm: Alarm) {
 }
 
 function AlarmRow({ alarm }: { alarm: Alarm }) {
+  const { user } = useAuth();
+  const asset = alarmAssetTarget(alarm, user?.permission_codes);
   return (
     <li className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 rounded-sm bg-surface-inset px-3 py-2 text-sm">
       <div className="min-w-0 [overflow-wrap:anywhere]">
@@ -58,11 +62,12 @@ function AlarmRow({ alarm }: { alarm: Alarm }) {
         <Link className="text-link underline underline-offset-2" to="/events" aria-label={`Open ${alarm.subject_key} in Events`}>
           Events
         </Link>
-        {alarm.managed_asset_id && (
-          <Link className="text-link underline underline-offset-2" to={`/equipment/${alarm.managed_asset_id}`} aria-label={`Open equipment for ${alarm.subject_key}`}>
-            Equipment
+        {asset?.kind === "link" && (
+          <Link className="text-link underline underline-offset-2" to={asset.to} aria-label={`Open ${asset.label.toLowerCase()} for ${alarm.subject_key}`}>
+            {asset.label}
           </Link>
         )}
+        {asset?.kind === "text" && <span className="font-mono text-fg-secondary">{asset.label}</span>}
       </div>
     </li>
   );

@@ -49,6 +49,21 @@ Response `AlarmOverviewOut`
 - `items` reuse the existing `AlarmOut` shape (severity and status remain separate fields).
 - Counts and items are read in one transaction snapshot so they cannot disagree with each other.
 
+`AlarmOut.managed_asset_type` (additive, nullable)
+
+- Every endpoint returning `AlarmOut` (`GET /alarms`, `GET /alarms/history`, `GET /alarms/overview`,
+  `POST /alarms/{id}/acknowledge`) now includes `managed_asset_type: string | null`, the `ManagedAsset.asset_type`
+  of the alarm's managed asset (`rack`, `equipment`, `pdu`, `ups`, `generator`, `power_panel`, `sensor`, `cable`,
+  `crac`, `crah`, `chiller`). It is `null` when the alarm has no managed asset or the asset no longer exists.
+- It is resolved with one extra query per response over the managed-asset ids of the alarms already returned,
+  so it adds no rows, changes no counts, ordering or limits, and follows exactly the same visibility as the
+  alarm itself. Older clients that ignore the field are unaffected.
+- Link rules in the UI (dashboard alarm rows and the Events detail panel): `equipment` links to
+  `/equipment/<id>` when the user holds `equipment:read`; `rack` links to `/racks/<id>` when the user holds
+  `rack:read`. Any other type, a missing or unknown type, or a missing permission shows a non-clickable reference
+  (for example "Rack asset 1a2b3c4d" or "Asset 1a2b3c4d"); the UI never guesses a route. An alarm without a
+  managed asset shows no asset reference.
+
 ## `GET /api/v1/dashboard/geography`
 
 Permission: `location:read` (scope-aware). Visibility uses `country_visible_clause`,
@@ -120,6 +135,15 @@ explicit "N more" link; the full list lives in **Events → Infrastructure**.
    and large alarm tables may be scanned. A partial index such as
    `(opened_at DESC, id DESC) WHERE status IN ('ACTIVE','ACKNOWLEDGED')` would serve it. It needs an Alembic
    migration, which is held with 0057 under Issue #214, so none is added. Measure on representative data first.
+
+   Follow-up record (no migration in this PR):
+   - Proposed index: partial index on `alarm (opened_at DESC, id DESC) WHERE status IN ('ACTIVE','ACKNOWLEDGED')`.
+   - Validation plan: on a representative-size alarm table, capture `EXPLAIN (ANALYZE, BUFFERS)` of the overview
+     statement (both `include_acknowledged` values, with and without `severity`) before and after the index;
+     compare the plans (index scan instead of a sequential scan plus sort, buffers read, timing); and measure the
+     write overhead the index adds on alarm open, acknowledge and clear.
+   - Sequencing: it must wait until the migration-0057 hold under Issue #214 is lifted, and then ships as its own
+     reviewed Alembic migration.
 3. **Site coordinates for restricted roles.** Withholding is now the default: `GET /dashboard/geography` returns
    precise coordinates only to callers with an unrestricted scope, and restricted callers get `coordinates:
    "withheld"` (the map then highlights countries and the list shows every authorized site). Returning

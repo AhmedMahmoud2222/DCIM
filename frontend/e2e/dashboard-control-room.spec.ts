@@ -6,14 +6,22 @@ const USER = {
   email: "ops@example.com",
   full_name: "Ops",
   role_names: ["Operator"],
-  permission_codes: ["alarm:read", "dashboard:read", "collector:read", "location:read"],
+  permission_codes: ["alarm:read", "dashboard:read", "collector:read", "location:read", "equipment:read", "rack:read"],
+};
+
+/** Alarm managed assets: equipment and racks have detail pages; any other type is a plain reference. */
+const ALARM_ASSETS: Record<string, { managed_asset_id: string; managed_asset_type: string }> = {
+  c0: { managed_asset_id: "eq-1", managed_asset_type: "equipment" },
+  c1: { managed_asset_id: "rk-1", managed_asset_type: "rack" },
+  c2: { managed_asset_id: "pdu-0001-ffff", managed_asset_type: "pdu" },
 };
 
 const alarm = (id: string, severity: string, status = "ACTIVE") => ({
   id,
   rule_id: "rule",
   integration_id: "integration",
-  managed_asset_id: id === "a0" ? "eq-1" : null,
+  managed_asset_id: ALARM_ASSETS[id]?.managed_asset_id ?? null,
+  managed_asset_type: ALARM_ASSETS[id]?.managed_asset_type ?? null,
   subject_key: `rack-${id}.temperature`,
   status,
   severity,
@@ -182,6 +190,12 @@ test.describe("Control Room dashboard", () => {
   test("the alarm row links to Events and to its equipment", async ({ page }) => {
     await mockApi(page);
     await page.goto("/");
+    const panel = alarmsPanel(page);
+    await expect(panel.getByRole("link", { name: "Open equipment for rack-c0.temperature" })).toHaveAttribute("href", "/equipment/eq-1");
+    await expect(panel.getByRole("link", { name: "Open rack for rack-c1.temperature" })).toHaveAttribute("href", "/racks/rk-1");
+    const pduRow = panel.getByRole("listitem").filter({ hasText: "rack-c2.temperature" });
+    await expect(pduRow.getByText("PDU asset pdu-0001")).toBeVisible();
+    await expect(pduRow.getByRole("link")).toHaveCount(1);
     await alarmsPanel(page).getByRole("link", { name: "Open rack-c0.temperature in Events" }).click();
     await expect(page).toHaveURL(/\/events$/);
     await expect(page.getByRole("tab", { name: /Active/ })).toHaveAttribute("aria-selected", "true");

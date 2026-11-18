@@ -3,6 +3,7 @@
 import base64
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
@@ -112,6 +113,9 @@ class AlarmOut(BaseModel):
     rule_id: uuid.UUID
     integration_id: uuid.UUID
     managed_asset_id: uuid.UUID | None
+    # Additive: the managed asset's type ("rack", "equipment", ...) so clients can pick the right detail page. None when
+    # the alarm has no managed asset or the asset no longer exists. Only ever returned for alarms the caller receives.
+    managed_asset_type: str | None = None
     subject_key: str
     status: str
     # Explicit severity (critical / warning / info), independent of the workflow `status` above.
@@ -341,7 +345,9 @@ async def list_alarms(
     stmt = select(Alarm).order_by(Alarm.opened_at.desc()).limit(limit)
     if status:
         stmt = stmt.where(Alarm.status == status)
-    return [_out(row) for row in (await db.execute(stmt)).scalars().all()]
+    rows = (await db.execute(stmt)).scalars().all()
+    types = await _asset_types(db, rows)
+    return [_out(row, types.get(row.managed_asset_id)) for row in rows]
 
 
 @router.get("/history", response_model=AlarmHistoryPage)
@@ -387,7 +393,8 @@ async def alarm_history(
     rows = (await db.execute(stmt)).scalars().all()
     page, has_more = rows[:limit], len(rows) > limit
     next_cursor = _encode_cursor(page[-1]) if has_more and page else None
-    return AlarmHistoryPage(items=[_out(row) for row in page], next_cursor=next_cursor)
+    types = await _asset_types(db, page)
+    return AlarmHistoryPage(items=[_out(row, types.get(row.managed_asset_id)) for row in page], next_cursor=next_cursor)
 
 
 @router.get("/overview", response_model=AlarmOverviewOut)
@@ -428,10 +435,11 @@ async def alarm_overview(
     rows = (await db.execute(stmt)).all()
     critical, warning, info, matching = rows[0][:4]
     alarms = [row[4] for row in rows if row[4] is not None]
+    types = await _asset_types(db, alarms)
     return AlarmOverviewOut(
         scope=AlarmOverviewScopeOut(include_acknowledged=include_acknowledged, severity=severity),
         counts=AlarmSeverityCountsOut(critical=critical, warning=warning, info=info, total=critical + warning + info),
-        items=[_out(row) for row in alarms],
+        items=[_out(row, types.get(row.managed_asset_id)) for row in alarms],
         matching_total=matching,
         limit=limit,
         truncated=matching > len(alarms),
@@ -447,11 +455,21 @@ async def acknowledge(
     if alarm is None:
         raise NotFoundError("Alarm not found.")
     await acknowledge_alarm(db, alarm=alarm, actor_user_id=ctx.user.id)
+    types = await _asset_types(db, [alarm])
     await db.commit()
-    return _out(alarm)
+    return _out(alarm, types.get(alarm.managed_asset_id))
 
 
-def _out(row: Alarm) -> AlarmOut:
+async def _asset_types(db: AsyncSession, rows: Sequence[Alarm]) -> dict[uuid.UUID | None, str]:
+    """One query resolving the managed-asset type of the given (already authorised) alarms; missing assets are absent."""
+    ids = {row.managed_asset_id for row in rows if row.managed_asset_id is not None}
+    if not ids:
+        return {}
+    result = await db.execute(select(ManagedAsset.id, ManagedAsset.asset_type).where(ManagedAsset.id.in_(ids)))
+    return {asset_id: asset_type for asset_id, asset_type in result.all()}
+
+
+def _out(row: Alarm, managed_asset_type: str | None = None) -> AlarmOut:
     unit = row.details.get("unit")
     version = row.details.get("registry_version")
     presentation = None
@@ -463,6 +481,7 @@ def _out(row: Alarm) -> AlarmOut:
         rule_id=row.rule_id,
         integration_id=row.integration_id,
         managed_asset_id=row.managed_asset_id,
+        managed_asset_type=managed_asset_type,
         subject_key=row.subject_key,
         status=row.status,
         severity=row.severity,

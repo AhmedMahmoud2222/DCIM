@@ -4,9 +4,12 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import delete
 
+from app.api.v1.alarms import _asset_types, _out
 from app.application import access_control
 from app.domain.alarm.models import Alarm
+from app.domain.identity.models import ManagedAsset
 from tests.api._ops_helpers import NOW, make_integration, make_rule
 from tests.api.test_user_groups import _group, _group_user, _make_rack, _make_site
 
@@ -162,3 +165,56 @@ async def test_existing_alarm_list_and_history_are_unchanged(client, admin, db_s
     await _alarms(db_session, rule, [("warning", "CLEARED", NOW), ("critical", "ACTIVE", NOW - timedelta(seconds=1))])
     assert len((await client.get("/api/v1/alarms", headers=admin)).json()) == 2
     assert len((await client.get("/api/v1/alarms/history", headers=admin)).json()["items"]) == 2
+
+
+async def _asset(db, asset_type):
+    asset = ManagedAsset(asset_type=asset_type, asset_tag=f"T-{uuid.uuid4().hex[:12]}", lifecycle_status="planned")
+    db.add(asset)
+    await db.commit()
+    return asset.id
+
+
+async def test_managed_asset_type_on_overview_list_history_and_acknowledge(client, admin, db_session, rule):
+    """Issue #365 (AGY P3): AlarmOut carries the managed asset's type so the UI links racks to /racks and equipment to
+    /equipment; alarms without an asset (or whose asset is gone) get None. Counts and ordering are unchanged."""
+    equipment_id, rack_id, pdu_id = [await _asset(db_session, t) for t in ("equipment", "rack", "pdu")]
+    [eq] = await _alarms(db_session, rule, [("critical", "ACTIVE", NOW)], asset_id=equipment_id)
+    [rk] = await _alarms(db_session, rule, [("warning", "ACTIVE", NOW - timedelta(seconds=1))], asset_id=rack_id)
+    [pd] = await _alarms(db_session, rule, [("info", "ACTIVE", NOW - timedelta(seconds=2))], asset_id=pdu_id)
+    [na] = await _alarms(db_session, rule, [("info", "ACTIVE", NOW - timedelta(seconds=3))])
+    expected = [(str(eq.id), "equipment"), (str(rk.id), "rack"), (str(pd.id), "pdu"), (str(na.id), None)]
+
+    overview = (await client.get(URL, headers=admin)).json()
+    assert [(i["id"], i["managed_asset_type"]) for i in overview["items"]] == expected
+    assert overview["counts"] == {"critical": 1, "warning": 1, "info": 2, "total": 4} and overview["matching_total"] == 4
+    listed = (await client.get("/api/v1/alarms", headers=admin)).json()
+    assert {(i["id"], i["managed_asset_type"]) for i in listed} == set(expected)
+    history = (await client.get("/api/v1/alarms/history", headers=admin)).json()["items"]
+    assert [(i["id"], i["managed_asset_type"]) for i in history] == expected
+
+    for alarm, asset_type in ((eq, "equipment"), (rk, "rack"), (na, None)):
+        r = await client.post(f"/api/v1/alarms/{alarm.id}/acknowledge", headers=admin)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "ACKNOWLEDGED" and r.json()["managed_asset_type"] == asset_type
+
+
+async def test_removed_managed_asset_gives_no_type(client, admin, db_session, rule):
+    asset_id = await _asset(db_session, "sensor")
+    [alarm] = await _alarms(db_session, rule, [("critical", "ACTIVE", NOW)], asset_id=asset_id)
+    await db_session.execute(delete(ManagedAsset).where(ManagedAsset.id == asset_id))
+    await db_session.commit()
+    [item] = (await client.get(URL, headers=admin)).json()["items"]
+    # Whether the id is nulled depends on the database FK action; either way no type (and so no link) is returned.
+    assert item["id"] == str(alarm.id) and item["managed_asset_id"] in (None, str(asset_id))
+    assert item["managed_asset_type"] is None
+
+
+async def test_unknown_managed_asset_id_resolves_to_no_type(db_session, rule):
+    integration, alarm_rule = rule
+    orphan = Alarm(
+        id=uuid.uuid4(), rule_id=alarm_rule.id, integration_id=integration.id, managed_asset_id=uuid.uuid4(),
+        subject_key="orphan", status="ACTIVE", severity="info", opened_at=NOW, last_value=1, details={},
+    )
+    types = await _asset_types(db_session, [orphan])
+    assert types == {} and _out(orphan, types.get(orphan.managed_asset_id)).managed_asset_type is None
+    assert _out(orphan).managed_asset_type is None

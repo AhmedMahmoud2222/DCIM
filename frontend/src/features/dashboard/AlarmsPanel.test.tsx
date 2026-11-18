@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AlarmsPanel } from "@/features/dashboard/AlarmsPanel";
 import { AlarmOverview, getAlarmOverview } from "@/features/telemetry/api";
+import type { CurrentUser } from "@/lib/authStore";
 import { renderWithProviders } from "@/test/renderWithProviders";
 
 vi.mock("@/features/telemetry/api");
@@ -12,6 +13,9 @@ const alarm = (id: string, extra: Record<string, unknown> = {}) => ({
   id, rule_id: "rule", integration_id: "integration", managed_asset_id: null, subject_key: `subject-${id}`, status: "ACTIVE", severity: "critical",
   opened_at: "2026-01-01T00:00:00Z", acknowledged_at: null, cleared_at: null, last_value: 1, unit: "1", presentation_value: 1, presentation_unit: "%", ...extra,
 });
+
+const userWith = (...permission_codes: string[]): CurrentUser => ({ id: "u", email: "u@example.test", full_name: "U", role_names: [], permission_codes });
+const ASSET_READER = userWith("alarm:read", "equipment:read", "rack:read");
 
 const COUNTS = { critical: 12, warning: 30, info: 4, total: 46 };
 const overview = (items: unknown[], extra: Partial<AlarmOverview> = {}): AlarmOverview =>
@@ -141,10 +145,10 @@ describe("Active alarms panel", () => {
   it("shows severity and workflow status as separate badges, with value, opened time and acknowledgement", async () => {
     vi.mocked(getAlarmOverview).mockResolvedValue(
       overview([
-        alarm("t", { subject_key: "rack-1.temperature", severity: "warning", status: "ACKNOWLEDGED", acknowledged_at: "2026-01-02T00:00:00Z", presentation_value: 25, presentation_unit: "degC", managed_asset_id: "eq-9" }),
+        alarm("t", { subject_key: "rack-1.temperature", severity: "warning", status: "ACKNOWLEDGED", acknowledged_at: "2026-01-02T00:00:00Z", presentation_value: 25, presentation_unit: "degC", managed_asset_id: "eq-9", managed_asset_type: "equipment" }),
       ]),
     );
-    renderWithProviders(<AlarmsPanel access="granted" />);
+    renderWithProviders(<AlarmsPanel access="granted" />, { user: ASSET_READER });
 
     await waitFor(() => expect(panel()).toHaveAttribute("data-state", "ready"));
     const [row] = within(panel()).getAllByRole("listitem");
@@ -187,5 +191,48 @@ describe("Active alarms panel", () => {
     renderWithProviders(<AlarmsPanel access="denied" />);
     expect(panel()).toHaveAttribute("data-state", "restricted");
     expect(getAlarmOverview).not.toHaveBeenCalled();
+  });
+});
+
+describe("AlarmsPanel managed asset reference", () => {
+  const ID = "1a2b3c4d-0000-4000-8000-000000000000";
+  async function rowFor(extra: Record<string, unknown>, user: CurrentUser = ASSET_READER) {
+    vi.mocked(getAlarmOverview).mockResolvedValue(overview([alarm("m", { subject_key: "pdu-7.load", managed_asset_id: ID, ...extra })]));
+    renderWithProviders(<AlarmsPanel access="granted" />, { user });
+    await waitFor(() => expect(panel()).toHaveAttribute("data-state", "ready"));
+    return within(panel()).getAllByRole("listitem")[0];
+  }
+
+  it("links equipment to its equipment page", async () => {
+    const row = await rowFor({ managed_asset_type: "equipment" });
+    expect(within(row).getByRole("link", { name: "Open equipment for pdu-7.load" })).toHaveAttribute("href", `/equipment/${ID}`);
+  });
+
+  it("links a rack to its rack page, not to equipment", async () => {
+    const row = await rowFor({ managed_asset_type: "rack" });
+    expect(within(row).getByRole("link", { name: "Open rack for pdu-7.load" })).toHaveAttribute("href", `/racks/${ID}`);
+    expect(within(row).queryByRole("link", { name: /Open equipment/ })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["pdu", "PDU asset 1a2b3c4d"],
+    [null, "Asset 1a2b3c4d"],
+    ["garbage", "Asset 1a2b3c4d"],
+  ])("shows a non-link reference for type %s", async (type, label) => {
+    const row = await rowFor({ managed_asset_type: type });
+    expect(within(row).getByText(label)).toBeInTheDocument();
+    expect(within(row).getAllByRole("link")).toHaveLength(1);
+  });
+
+  it("shows a non-link reference when the user lacks the page's permission", async () => {
+    const row = await rowFor({ managed_asset_type: "rack" }, userWith("alarm:read", "equipment:read"));
+    expect(within(row).getByText("Rack asset 1a2b3c4d")).toBeInTheDocument();
+    expect(within(row).getAllByRole("link")).toHaveLength(1);
+  });
+
+  it("shows nothing for an alarm without a managed asset", async () => {
+    const row = await rowFor({ managed_asset_id: null, managed_asset_type: null });
+    expect(within(row).getAllByRole("link")).toHaveLength(1);
+    expect(row).not.toHaveTextContent(/asset/i);
   });
 });

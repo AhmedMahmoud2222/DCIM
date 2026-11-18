@@ -43,6 +43,8 @@ export interface Alarm {
   rule_id: string;
   integration_id: string;
   managed_asset_id: string | null;
+  /** The managed asset's type ("rack", "equipment", ...); null or absent when unknown. Never guess a route without it. */
+  managed_asset_type?: string | null;
   subject_key: string;
   status: "ACTIVE" | "ACKNOWLEDGED" | "CLEARED";
   /** Explicit severity from the backend; independent of the workflow `status`. */

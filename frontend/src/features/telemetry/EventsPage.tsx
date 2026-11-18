@@ -4,6 +4,8 @@ import { Link, useSearchParams } from "react-router-dom";
 
 import { QueryStatus } from "@/components/data/QueryStatus";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { useAuth } from "@/features/auth/useAuth";
+import { alarmAssetTarget } from "@/features/dashboard/dashboardModel";
 import { OperationsViews, OpsView } from "@/features/operations/OperationsViews";
 import { AlarmWorkflowStatus, ExceptionSeverity } from "@/features/status/StatusBadges";
 import { Alarm, acknowledgeAlarm, getOpenAlarms, listAlarmHistory } from "@/features/telemetry/api";
@@ -43,6 +45,7 @@ function exportCsv(alarms: Alarm[], fileName: string) {
 
 export function EventsPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   // The open tab lives in ?view=, so /events?view=infrastructure deep-links and a tab change is shareable.
   const [searchParams, setSearchParams] = useSearchParams();
   const view = parseView(searchParams.get("view"));
@@ -104,6 +107,7 @@ export function EventsPage() {
     );
   }, [requestedAlarms, search]);
   const selected = visibleAlarms.find((alarm) => alarm.id === selectedId) ?? visibleAlarms[0] ?? null;
+  const selectedAsset = selected ? alarmAssetTarget(selected, user?.permission_codes) : null;
   const loading = view === "active" ? activeQuery.isLoading || acknowledgedQuery.isLoading : historyQuery.isLoading;
   const error = view === "active" ? activeQuery.error || acknowledgedQuery.error : historyQuery.error;
   // A list exists only once every request behind the view has answered. A paused or disabled request
@@ -390,11 +394,12 @@ export function EventsPage() {
                   <dd className="break-all font-mono text-xs">{selected.rule_id}</dd>
                 </div>
               </dl>
-              {selected.managed_asset_id && (
-                <Link className="mt-4 inline-flex text-sm font-medium text-blue-400 hover:underline" to={`/equipment/${selected.managed_asset_id}`}>
-                  Open affected equipment →
+              {selectedAsset?.kind === "link" && (
+                <Link className="mt-4 inline-flex text-sm font-medium text-link hover:underline" to={selectedAsset.to} aria-label={`Open ${selectedAsset.label.toLowerCase()} for ${selected.subject_key}`}>
+                  Open affected {selectedAsset.label.toLowerCase()} →
                 </Link>
               )}
+              {selectedAsset?.kind === "text" && <p className="mt-4 font-mono text-xs text-fg-secondary">Affected asset: {selectedAsset.label}</p>}
               {selected.status === "ACTIVE" && (
                 <button
                   type="button"

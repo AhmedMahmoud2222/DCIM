@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   accessFor,
+  alarmAssetTarget,
   collectorsNeedingAttention,
   connectivityCounts,
   DASHBOARD_PERMISSIONS,
@@ -139,5 +140,50 @@ describe("collector connectivity", () => {
 
   it("lists nothing when every collector is healthy", () => {
     expect(collectorsNeedingAttention([collector("a", "healthy")])).toEqual([]);
+  });
+});
+
+describe("alarmAssetTarget", () => {
+  const ALL = ["equipment:read", "rack:read"];
+  const asset = (managed_asset_type: string | null | undefined, managed_asset_id: string | null = "1a2b3c4d-5e6f-7a8b-9c0d-112233445566") => ({
+    managed_asset_id,
+    managed_asset_type,
+  });
+
+  it("links equipment to /equipment/<id> for a user with equipment:read", () => {
+    expect(alarmAssetTarget(asset("equipment", "eq-1"), ALL)).toEqual({ kind: "link", to: "/equipment/eq-1", label: "Equipment" });
+  });
+
+  it("links a rack to /racks/<id> for a user with rack:read, never to /equipment", () => {
+    expect(alarmAssetTarget(asset("rack", "rk-1"), ALL)).toEqual({ kind: "link", to: "/racks/rk-1", label: "Rack" });
+  });
+
+  it("renders nothing for an alarm without a managed asset", () => {
+    expect(alarmAssetTarget(asset("equipment", null), ALL)).toBeNull();
+    expect(alarmAssetTarget(asset(null, null), ALL)).toBeNull();
+  });
+
+  it("never guesses a link when the type is missing", () => {
+    expect(alarmAssetTarget(asset(null), ALL)).toEqual({ kind: "text", label: "Asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset(undefined), ALL)).toEqual({ kind: "text", label: "Asset 1a2b3c4d" });
+  });
+
+  it("is a plain reference for types without a detail page, naming known types only", () => {
+    expect(alarmAssetTarget(asset("pdu"), ALL)).toEqual({ kind: "text", label: "PDU asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("cable"), ALL)).toEqual({ kind: "text", label: "Cable asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("garbage<script>"), ALL)).toEqual({ kind: "text", label: "Asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("constructor"), ALL)).toEqual({ kind: "text", label: "Asset 1a2b3c4d" });
+  });
+
+  it("is a plain reference when the user lacks the detail page's permission or is not loaded", () => {
+    expect(alarmAssetTarget(asset("equipment"), ["rack:read"])).toEqual({ kind: "text", label: "Equipment asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("rack"), ["equipment:read"])).toEqual({ kind: "text", label: "Rack asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("rack"), user("rack:read_all").permission_codes)).toEqual({ kind: "text", label: "Rack asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("rack"), null)).toEqual({ kind: "text", label: "Rack asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("rack"), undefined)).toEqual({ kind: "text", label: "Rack asset 1a2b3c4d" });
+  });
+
+  it("encodes the id into the path", () => {
+    expect(alarmAssetTarget(asset("rack", "a/b?c"), ALL)).toEqual({ kind: "link", to: "/racks/a%2Fb%3Fc", label: "Rack" });
   });
 });
