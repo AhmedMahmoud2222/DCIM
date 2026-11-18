@@ -281,7 +281,7 @@ jobs:
           set -o pipefail
           pytest -v -rs tests/api/test_rack_authz_race_db26.py | tee "$RUNNER_TEMP/db26.txt"
           {
-            echo '### DB-26 rack authorization race tests (`pytest -v -rs`)'
+            echo '### DB-26 rack authorization race tests (pytest -v -rs)'
             echo '```'
             grep -E "PASSED|FAILED|SKIPPED|ERROR|passed|skipped|failed" "$RUNNER_TEMP/db26.txt"
             echo '```'
