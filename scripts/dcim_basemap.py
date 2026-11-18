@@ -18,6 +18,7 @@ See docs/OFFLINE_MAP_DATA.md.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import math
@@ -95,10 +96,8 @@ def atomic_write(path: Path, data: bytes) -> None:
             os.fsync(handle.fileno())
         os.replace(tmp_name, path)
     except BaseException:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_name)
-        except FileNotFoundError:
-            pass
         raise
 
 
@@ -116,89 +115,95 @@ def _check_schema_version(value: object, what: str) -> None:
         raise BasemapError(f"incompatible {what} schema_version {value!r} (supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)})")
 
 
+def _check_header(doc: object, fmt: str, what: str, noun: str) -> dict:
+    """Checks what manifests and data files share: object, format, schema_version, dataset_id, version."""
+    if not isinstance(doc, dict):
+        raise BasemapError(f"{noun} must be a JSON object")
+    if doc.get("format") != fmt:
+        raise BasemapError(f"{what} format must be {fmt!r}, got {doc.get('format')!r}")
+    _check_schema_version(doc.get("schema_version"), what)
+    _check_id(doc.get("dataset_id"), f"{what} dataset_id")
+    _check_id(doc.get("version"), f"{what} version")
+    return doc
+
+
 def validate_manifest(manifest: object) -> dict:
-    if not isinstance(manifest, dict):
-        raise BasemapError("manifest must be a JSON object")
-    if manifest.get("format") != MANIFEST_FORMAT:
-        raise BasemapError(f"manifest format must be {MANIFEST_FORMAT!r}, got {manifest.get('format')!r}")
-    _check_schema_version(manifest.get("schema_version"), "manifest")
-    _check_id(manifest.get("dataset_id"), "manifest dataset_id")
-    _check_id(manifest.get("version"), "manifest version")
+    manifest = _check_header(manifest, MANIFEST_FORMAT, "manifest", "manifest")
     check_file_name(manifest.get("file"), "manifest file")
-    size = manifest.get("bytes")
-    if not is_int(size) or not 0 < size <= MAX_BYTES:
+    if not is_int(size := manifest.get("bytes")) or not 0 < size <= MAX_BYTES:
         raise BasemapError(f"manifest bytes must be an integer in 1..{MAX_BYTES}, got {size!r}")
-    digest = manifest.get("sha256")
-    if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+    if not isinstance(digest := manifest.get("sha256"), str) or not SHA256_RE.fullmatch(digest):
         raise BasemapError("manifest sha256 must be 64 lowercase hex characters")
-    if "created_at" in manifest and not isinstance(manifest["created_at"], str):
-        raise BasemapError("manifest created_at must be a string")
-    if "source" in manifest and not isinstance(manifest["source"], dict):
-        raise BasemapError("manifest source must be an object")
+    for key, kind, expected in (("created_at", str, "a string"), ("source", dict, "an object")):
+        if key in manifest and not isinstance(manifest[key], kind):
+            raise BasemapError(f"manifest {key} must be {expected}")
     return manifest
+
+
+def _check_ring(ring: object, where: str) -> int:
+    """Validates one flat [lon, lat, ...] ring; returns its point count."""
+    if not isinstance(ring, list):
+        raise BasemapError(f"{where} must be a flat list of integers")
+    if len(ring) % 2:
+        raise BasemapError(f"{where} has odd length {len(ring)}")
+    if len(ring) < 6:
+        raise BasemapError(f"{where} has fewer than 3 points")
+    for v_index, value in enumerate(ring):
+        if not is_int(value):
+            raise BasemapError(f"{where}[{v_index}] is not an integer: {value!r}")
+        limit, axis = (LON_LIMIT, "longitude") if v_index % 2 == 0 else (LAT_LIMIT, "latitude")
+        if not -limit <= value <= limit:
+            raise BasemapError(f"{where}[{v_index}] {axis} {value} out of range +/-{limit}")
+    return len(ring) // 2
+
+
+def _check_polygons(polygons: object, where: str, points: int) -> int:
+    """Validates one country's polygons; returns the running point total."""
+    if not isinstance(polygons, list):
+        raise BasemapError(f"{where}.polygons must be a list")
+    for p_index, polygon in enumerate(polygons):
+        if not isinstance(polygon, list) or not polygon:
+            raise BasemapError(f"{where}.polygons[{p_index}] must be a non-empty list of rings")
+        for r_index, ring in enumerate(polygon):
+            points += _check_ring(ring, f"{where}.polygons[{p_index}][{r_index}]")
+            if points > MAX_POINTS:
+                raise BasemapError(f"too many points: more than {MAX_POINTS}")
+    return points
+
+
+def _check_country(country: object, where: str, seen_iso2: set[str], points: int) -> int:
+    """Validates one country (iso2 format and uniqueness, name, polygons); returns the running point total."""
+    if not isinstance(country, dict):
+        raise BasemapError(f"{where} must be an object")
+    if (iso2 := country.get("iso2")) is not None:
+        if not isinstance(iso2, str) or not ISO2_RE.fullmatch(iso2):
+            raise BasemapError(f"{where}.iso2 {iso2!r} must match {ISO2_RE.pattern} or be null")
+        if iso2 in seen_iso2:
+            raise BasemapError(f"duplicate iso2 {iso2!r} at {where}")
+        seen_iso2.add(iso2)
+    name = country.get("name")
+    if not isinstance(name, str) or not name.strip() or len(name) > MAX_NAME_LENGTH:
+        raise BasemapError(f"{where}.name must be a non-empty string of at most {MAX_NAME_LENGTH} characters")
+    return _check_polygons(country.get("polygons"), where, points)
 
 
 def validate_data(data: object) -> dict:
     """Validates a parsed basemap data document; returns counts for reporting."""
-    if not isinstance(data, dict):
-        raise BasemapError("data file must be a JSON object")
-    if data.get("format") != DATA_FORMAT:
-        raise BasemapError(f"data format must be {DATA_FORMAT!r}, got {data.get('format')!r}")
-    _check_schema_version(data.get("schema_version"), "data")
-    _check_id(data.get("dataset_id"), "data dataset_id")
-    _check_id(data.get("version"), "data version")
+    data = _check_header(data, DATA_FORMAT, "data", "data file")
     if data.get("projection") != PROJECTION:
         raise BasemapError(f"data projection must be {PROJECTION!r}")
     if not is_int(data.get("precision")) or data.get("precision") != PRECISION:
         raise BasemapError(f"data precision must be {PRECISION}")
-    countries = data.get("countries")
-    if not isinstance(countries, list):
+    if not isinstance(countries := data.get("countries"), list):
         raise BasemapError("data countries must be a list")
     if not countries:
         # The browser rejects an empty basemap, so a map that validates here must not be empty either.
         raise BasemapError("data countries must not be empty")
     if len(countries) > MAX_COUNTRIES:
         raise BasemapError(f"too many countries: {len(countries)} > {MAX_COUNTRIES}")
-    seen_iso2: set[str] = set()
-    points = 0
+    seen_iso2, points = set(), 0
     for index, country in enumerate(countries):
-        where = f"countries[{index}]"
-        if not isinstance(country, dict):
-            raise BasemapError(f"{where} must be an object")
-        iso2 = country.get("iso2")
-        if iso2 is not None:
-            if not isinstance(iso2, str) or not ISO2_RE.fullmatch(iso2):
-                raise BasemapError(f"{where}.iso2 {iso2!r} must match {ISO2_RE.pattern} or be null")
-            if iso2 in seen_iso2:
-                raise BasemapError(f"duplicate iso2 {iso2!r} at {where}")
-            seen_iso2.add(iso2)
-        name = country.get("name")
-        if not isinstance(name, str) or not name.strip() or len(name) > MAX_NAME_LENGTH:
-            raise BasemapError(f"{where}.name must be a non-empty string of at most {MAX_NAME_LENGTH} characters")
-        polygons = country.get("polygons")
-        if not isinstance(polygons, list):
-            raise BasemapError(f"{where}.polygons must be a list")
-        for p_index, polygon in enumerate(polygons):
-            if not isinstance(polygon, list) or not polygon:
-                raise BasemapError(f"{where}.polygons[{p_index}] must be a non-empty list of rings")
-            for r_index, ring in enumerate(polygon):
-                ring_where = f"{where}.polygons[{p_index}][{r_index}]"
-                if not isinstance(ring, list):
-                    raise BasemapError(f"{ring_where} must be a flat list of integers")
-                if len(ring) % 2:
-                    raise BasemapError(f"{ring_where} has odd length {len(ring)}")
-                if len(ring) < 6:
-                    raise BasemapError(f"{ring_where} has fewer than 3 points")
-                for v_index, value in enumerate(ring):
-                    if not is_int(value):
-                        raise BasemapError(f"{ring_where}[{v_index}] is not an integer: {value!r}")
-                    limit = LON_LIMIT if v_index % 2 == 0 else LAT_LIMIT
-                    if not -limit <= value <= limit:
-                        axis = "longitude" if v_index % 2 == 0 else "latitude"
-                        raise BasemapError(f"{ring_where}[{v_index}] {axis} {value} out of range +/-{limit}")
-                points += len(ring) // 2
-                if points > MAX_POINTS:
-                    raise BasemapError(f"too many points: more than {MAX_POINTS}")
+        points = _check_country(country, f"countries[{index}]", seen_iso2, points)
     return {"countries": len(countries), "points": points, "iso2": len(seen_iso2)}
 
 
@@ -214,26 +219,23 @@ def _strict_json(raw: bytes, what: str) -> object:
         raise BasemapError(f"{what} is not valid JSON (corrupt or truncated): {exc}") from exc
 
 
+def _read_file(path: Path, what: str, limit: int) -> bytes:
+    if not path.is_file():
+        raise BasemapError(f"missing {what} {path}")
+    if len(raw := path.read_bytes()) > limit:
+        raise BasemapError(f"{what} larger than {limit} bytes")
+    return raw
+
+
 def validate_dir(directory: Path, manifest_name: str = MANIFEST_NAME) -> dict:
     """Validates `<directory>/<manifest_name>` and the data file it names. Returns a summary."""
     check_file_name(manifest_name, "manifest name")
-    manifest_path = directory / manifest_name
-    if not manifest_path.is_file():
-        raise BasemapError(f"missing manifest {manifest_path}")
-    manifest_raw = manifest_path.read_bytes()
-    if len(manifest_raw) > MAX_MANIFEST_BYTES:
-        raise BasemapError(f"manifest larger than {MAX_MANIFEST_BYTES} bytes")
+    manifest_raw = _read_file(directory / manifest_name, "manifest", MAX_MANIFEST_BYTES)
     manifest = validate_manifest(_strict_json(manifest_raw, "manifest"))
-    data_path = directory / manifest["file"]
-    if not data_path.is_file():
-        raise BasemapError(f"missing data file {data_path}")
-    raw = data_path.read_bytes()
-    if len(raw) > MAX_BYTES:
-        raise BasemapError(f"data file larger than {MAX_BYTES} bytes")
+    raw = _read_file(directory / manifest["file"], "data file", MAX_BYTES)
     if len(raw) != manifest["bytes"]:
         raise BasemapError(f"size mismatch: data file has {len(raw)} bytes, manifest says {manifest['bytes']}")
-    digest = sha256_hex(raw)
-    if digest != manifest["sha256"]:
+    if (digest := sha256_hex(raw)) != manifest["sha256"]:
         raise BasemapError(f"checksum mismatch: data file sha256 {digest}, manifest says {manifest['sha256']}")
     data = _strict_json(raw, "data file")
     counts = validate_data(data)
@@ -242,14 +244,7 @@ def validate_dir(directory: Path, manifest_name: str = MANIFEST_NAME) -> dict:
             f"dataset/version mismatch: data is {data['dataset_id']} {data['version']}, "
             f"manifest is {manifest['dataset_id']} {manifest['version']}"
         )
-    return {
-        "dataset_id": manifest["dataset_id"],
-        "version": manifest["version"],
-        "file": manifest["file"],
-        "bytes": len(raw),
-        "sha256": digest,
-        **counts,
-    }
+    return {**{key: manifest[key] for key in ("dataset_id", "version", "file")}, "bytes": len(raw), "sha256": digest, **counts}
 
 
 # --------------------------------------------------------------------------- build
@@ -262,9 +257,7 @@ def _round(value: float) -> int:
 
 
 def _segment_distance_sq(p: tuple[int, int], a: tuple[int, int], b: tuple[int, int]) -> float:
-    ax, ay = a
-    dx, dy = b[0] - ax, b[1] - ay
-    px, py = p[0] - ax, p[1] - ay
+    dx, dy, px, py = b[0] - a[0], b[1] - a[1], p[0] - a[0], p[1] - a[1]
     length_sq = dx * dx + dy * dy
     if length_sq == 0:
         return float(px * px + py * py)
@@ -282,7 +275,6 @@ def _douglas_peucker_closed(points: list[tuple[int, int]], tolerance: float) -> 
     ext = points + [points[0]]
     keep = [False] * len(ext)
     keep[0] = keep[far] = keep[-1] = True
-    tol_sq = tolerance * tolerance
     stack = [(0, far), (far, len(ext) - 1)]
     while stack:
         start, end = stack.pop()
@@ -291,23 +283,20 @@ def _douglas_peucker_closed(points: list[tuple[int, int]], tolerance: float) -> 
             d = _segment_distance_sq(ext[i], ext[start], ext[end])
             if d > best:
                 best, best_index = d, i
-        if best_index >= 0 and best > tol_sq:
+        if best_index >= 0 and best > tolerance * tolerance:
             keep[best_index] = True
-            stack.append((start, best_index))
-            stack.append((best_index, end))
+            stack.extend(((start, best_index), (best_index, end)))
     return [ext[i] for i in range(n) if keep[i]]
 
 
 def _area(points: list[tuple[int, int]]) -> float:
     """Absolute shoelace area in square degrees."""
-    total = 0
-    for i, (x1, y1) in enumerate(points):
-        x2, y2 = points[(i + 1) % len(points)]
-        total += x1 * y2 - x2 * y1
+    total = sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(points, points[1:] + points[:1], strict=True))
     return abs(total) / 2 / (PRECISION * PRECISION)
 
 
-def _prepare_ring(raw_ring: object, tolerance: float) -> list[tuple[int, int]] | None:
+def _ring_points(raw_ring: object) -> list[tuple[int, int]]:
+    """Rounds a source ring, dropping consecutive duplicate points and the closing point(s)."""
     if not isinstance(raw_ring, list):
         raise BasemapError("source ring must be a list of positions")
     points: list[tuple[int, int]] = []
@@ -319,6 +308,11 @@ def _prepare_ring(raw_ring: object, tolerance: float) -> list[tuple[int, int]] |
             points.append(point)
     while len(points) > 1 and points[-1] == points[0]:
         points.pop()
+    return points
+
+
+def _prepare_ring(raw_ring: object, tolerance: float) -> list[tuple[int, int]] | None:
+    points = _ring_points(raw_ring)
     if len(points) < 3:
         return None
     simplified = _douglas_peucker_closed(points, tolerance)
@@ -328,51 +322,76 @@ def _prepare_ring(raw_ring: object, tolerance: float) -> list[tuple[int, int]] |
     return simplified
 
 
-def _flatten(points: list[tuple[int, int]]) -> list[int]:
-    return [value for point in points for value in point]
+def _convert_polygon(raw_polygon: object, tolerance: float, min_area: float) -> tuple[float, list] | None:
+    """Returns (outer ring area, [outer, *holes above min_area]), or None for an unusable polygon."""
+    if not isinstance(raw_polygon, list) or not raw_polygon:
+        return None
+    outer = _prepare_ring(raw_polygon[0], tolerance)
+    if outer is None:
+        return None
+    holes = [_prepare_ring(raw_hole, tolerance) for raw_hole in raw_polygon[1:]]
+    return _area(outer), [outer, *(hole for hole in holes if hole is not None and _area(hole) >= min_area)]
 
 
 def _convert_geometry(geometry: object, tolerance: float, min_area: float) -> list[list[list[int]]]:
-    if not isinstance(geometry, dict):
+    if not isinstance(geometry, dict) or geometry.get("type") not in ("Polygon", "MultiPolygon"):
         return []
-    kind = geometry.get("type")
-    coordinates = geometry.get("coordinates")
-    if kind == "Polygon":
-        raw_polygons = [coordinates]
-    elif kind == "MultiPolygon":
-        raw_polygons = coordinates
-    else:
-        return []
+    raw_polygons = [geometry.get("coordinates")] if geometry.get("type") == "Polygon" else geometry.get("coordinates")
     if not isinstance(raw_polygons, list):
         raise BasemapError("source geometry coordinates must be a list")
-    candidates: list[tuple[float, list[list[tuple[int, int]]]]] = []
-    for raw_polygon in raw_polygons:
-        if not isinstance(raw_polygon, list) or not raw_polygon:
-            continue
-        outer = _prepare_ring(raw_polygon[0], tolerance)
-        if outer is None:
-            continue
-        holes = []
-        for raw_hole in raw_polygon[1:]:
-            hole = _prepare_ring(raw_hole, tolerance)
-            if hole is not None and _area(hole) >= min_area:
-                holes.append(hole)
-        candidates.append((_area(outer), [outer, *holes]))
+    candidates = [c for c in (_convert_polygon(p, tolerance, min_area) for p in raw_polygons) if c is not None]
     if not candidates:
         return []
-    kept = [rings for area, rings in candidates if area >= min_area]
-    if not kept:
-        # Never delete a tiny nation: keep its largest polygon even when it is below the area floor.
-        kept = [max(candidates, key=lambda item: item[0])[1]]
-    return [[_flatten(ring) for ring in rings] for rings in kept]
+    # Never delete a tiny nation: keep its largest polygon even when it is below the area floor.
+    kept = [rings for area, rings in candidates if area >= min_area] or [max(candidates, key=lambda item: item[0])[1]]
+    return [[[value for point in ring for value in point] for ring in rings] for rings in kept]
 
 
 def _iso2(properties: dict) -> str | None:
-    for key in ("ISO_A2_EH", "ISO_A2"):
-        value = properties.get(key)
-        if isinstance(value, str) and ISO2_RE.fullmatch(value):
-            return value
-    return None
+    values = (properties.get(key) for key in ("ISO_A2_EH", "ISO_A2"))
+    return next((value for value in values if isinstance(value, str) and ISO2_RE.fullmatch(value)), None)
+
+
+def _feature_to_country(feature: object, tolerance: float, min_area: float) -> dict | None:
+    """Converts one source feature; None for a non-object feature or one without usable polygons."""
+    if not isinstance(feature, dict):
+        return None
+    properties = feature.get("properties") or {}
+    name = properties.get("NAME") or properties.get("ADMIN")
+    if not isinstance(name, str) or not name.strip():
+        raise BasemapError("source feature has no NAME or ADMIN property")
+    polygons = _convert_geometry(feature.get("geometry"), tolerance * PRECISION, min_area)
+    if not polygons:
+        return None
+    iso2 = _iso2(properties)
+    direct = iso2 is not None and properties.get("ISO_A2") == iso2
+    return {"iso2": iso2, "name": name.strip()[:MAX_NAME_LENGTH], "polygons": polygons, "_direct": direct}
+
+
+def _resolve_shared_iso2(countries: list[dict]) -> None:
+    """ISO_A2_EH repeats the parent code on some dependencies (e.g. Ashmore and Cartier Islands -> AU).
+
+    The feature whose own ISO_A2 carries the code keeps it; the others are drawn with iso2 null.
+    """
+    by_code: dict[str, list[dict]] = {}
+    for country in countries:
+        if country["iso2"] is not None:
+            by_code.setdefault(country["iso2"], []).append(country)
+    for code, holders in by_code.items():
+        if len(holders) < 2:
+            continue
+        direct = [c for c in holders if c["_direct"]]
+        if len(direct) != 1:
+            raise BasemapError(f"source has ambiguous iso2 {code!r} ({', '.join(c['name'] for c in holders)})")
+        for country in holders:
+            if country is not direct[0]:
+                country["iso2"] = None
+    for country in countries:
+        del country["_direct"]
+
+
+def _header_fields(fmt: str, dataset_id: str, version: str) -> dict:
+    return {"format": fmt, "schema_version": 1, "dataset_id": dataset_id, "version": version}
 
 
 def build_data(source: object, dataset_id: str, version: str, tolerance: float, min_area: float) -> bytes:
@@ -381,51 +400,11 @@ def build_data(source: object, dataset_id: str, version: str, tolerance: float, 
     features = source.get("features")
     if not isinstance(features, list):
         raise BasemapError("source features must be a list")
-    countries = []
-    for feature in features:
-        if not isinstance(feature, dict):
-            continue
-        properties = feature.get("properties") or {}
-        name = properties.get("NAME") or properties.get("ADMIN")
-        if not isinstance(name, str) or not name.strip():
-            raise BasemapError("source feature has no NAME or ADMIN property")
-        polygons = _convert_geometry(feature.get("geometry"), tolerance * PRECISION, min_area)
-        if polygons:
-            iso2 = _iso2(properties)
-            countries.append(
-                {
-                    "iso2": iso2,
-                    "name": name.strip()[:MAX_NAME_LENGTH],
-                    "polygons": polygons,
-                    "_direct": iso2 is not None and properties.get("ISO_A2") == iso2,
-                }
-            )
-    # ISO_A2_EH repeats the parent code on some dependencies (e.g. Ashmore and Cartier Islands -> AU).
-    # The feature whose own ISO_A2 carries the code keeps it; the others are drawn with iso2 null.
-    by_code: dict[str, list[dict]] = {}
-    for country in countries:
-        if country["iso2"] is not None:
-            by_code.setdefault(country["iso2"], []).append(country)
-    for code, holders in by_code.items():
-        if len(holders) > 1:
-            direct = [c for c in holders if c.pop("_direct")]
-            if len(direct) != 1:
-                raise BasemapError(f"source has ambiguous iso2 {code!r} ({', '.join(c['name'] for c in holders)})")
-            for country in holders:
-                if country is not direct[0]:
-                    country["iso2"] = None
-    for country in countries:
-        country.pop("_direct", None)
+    countries = [c for c in (_feature_to_country(f, tolerance, min_area) for f in features) if c is not None]
+    _resolve_shared_iso2(countries)
     countries.sort(key=lambda c: (c["name"], c["iso2"] or ""))
-    document = {
-        "format": DATA_FORMAT,
-        "schema_version": 1,
-        "dataset_id": dataset_id,
-        "version": version,
-        "projection": PROJECTION,
-        "precision": PRECISION,
-        "countries": countries,
-    }
+    document = _header_fields(DATA_FORMAT, dataset_id, version)
+    document |= {"projection": PROJECTION, "precision": PRECISION, "countries": countries}
     validate_data(document)
     raw = (json.dumps(document, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
     if len(raw) > MAX_BYTES:
@@ -434,17 +413,8 @@ def build_data(source: object, dataset_id: str, version: str, tolerance: float, 
 
 
 def build_manifest(raw: bytes, file_name: str, dataset_id: str, version: str, created_at: str, source: dict) -> bytes:
-    manifest = {
-        "format": MANIFEST_FORMAT,
-        "schema_version": 1,
-        "dataset_id": dataset_id,
-        "version": version,
-        "file": file_name,
-        "bytes": len(raw),
-        "sha256": sha256_hex(raw),
-        "created_at": created_at,
-        "source": source,
-    }
+    manifest = _header_fields(MANIFEST_FORMAT, dataset_id, version)
+    manifest |= {"file": file_name, "bytes": len(raw), "sha256": sha256_hex(raw), "created_at": created_at, "source": source}
     validate_manifest(manifest)
     return (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
@@ -462,15 +432,10 @@ def cmd_build(args: argparse.Namespace) -> int:
     if not args.tolerance >= 0 or not args.min_area >= 0:
         raise BasemapError("--tolerance and --min-area must be >= 0")
     source_raw = Path(args.geojson).read_bytes()
-    source = _strict_json(source_raw, "source GeoJSON")
-    raw = build_data(source, args.dataset_id, args.version, args.tolerance, args.min_area)
+    raw = build_data(_strict_json(source_raw, "source GeoJSON"), args.dataset_id, args.version, args.tolerance, args.min_area)
     created_at = args.created_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    source_info = {
-        "name": args.source_name,
-        "url": args.source_url,
-        "license": args.source_license,
-        "source_sha256": sha256_hex(source_raw),
-    }
+    source_info = {"name": args.source_name, "url": args.source_url, "license": args.source_license}
+    source_info["source_sha256"] = sha256_hex(source_raw)
     manifest = build_manifest(raw, file_name, args.dataset_id, args.version, created_at, source_info)
     out_dir = check_dir_argument(Path(args.out_dir), "--out-dir")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -478,9 +443,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     atomic_write(out_dir / manifest_name, manifest)
     summary = validate_dir(out_dir, manifest_name)
     print(
-        f"OK: built {summary['dataset_id']} {summary['version']} -> {out_dir / file_name} "
-        f"({summary['bytes']} bytes, {summary['countries']} countries, {summary['points']} points, "
-        f"sha256 {summary['sha256']})"
+        f"OK: built {summary['dataset_id']} {summary['version']} -> {out_dir / file_name} ({summary['bytes']} bytes, "
+        f"{summary['countries']} countries, {summary['points']} points, sha256 {summary['sha256']})"
     )
     return 0
 
@@ -513,10 +477,8 @@ def cmd_install(args: argparse.Namespace) -> int:
     if not target_data.exists():
         atomic_write(target_data, data_raw)
     active = target / MANIFEST_NAME
-    if active.is_file():
-        current = active.read_bytes()
-        if current != manifest_raw:
-            atomic_write(target / PREVIOUS_MANIFEST_NAME, current)
+    if active.is_file() and (current := active.read_bytes()) != manifest_raw:
+        atomic_write(target / PREVIOUS_MANIFEST_NAME, current)
     atomic_write(active, manifest_raw)
     validate_dir(target, MANIFEST_NAME)
     print(f"OK: installed {summary['dataset_id']} {summary['version']} into {target}")
@@ -556,8 +518,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     previous, _ = _describe(target, PREVIOUS_MANIFEST_NAME)
     if active == "none":
         active = "none (the browser uses the bundled basemap)"
-    print(f"active:   {active}")
-    print(f"previous: {previous}")
+    print(f"active:   {active}\nprevious: {previous}")
     return 0 if active_ok else 1
 
 
@@ -590,13 +551,13 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--target", required=True, help="map-data directory served at /map-data/")
     install.set_defaults(func=cmd_install)
 
-    rollback = sub.add_parser("rollback", help="restore manifest.previous.json atomically")
-    rollback.add_argument("--target", required=True)
-    rollback.set_defaults(func=cmd_rollback)
-
-    status = sub.add_parser("status", help="report the active and previous versions")
-    status.add_argument("--target", required=True)
-    status.set_defaults(func=cmd_status)
+    for name, func, help_text in (
+        ("rollback", cmd_rollback, "restore manifest.previous.json atomically"),
+        ("status", cmd_status, "report the active and previous versions"),
+    ):
+        target_only = sub.add_parser(name, help=help_text)
+        target_only.add_argument("--target", required=True)
+        target_only.set_defaults(func=func)
     return parser
 
 
@@ -604,10 +565,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except BasemapError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    except OSError as exc:
+    except (BasemapError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

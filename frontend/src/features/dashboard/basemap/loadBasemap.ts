@@ -86,6 +86,25 @@ async function loadBundled(bundled: () => Promise<unknown>, note?: string): Prom
   return { source: "bundled", datasetId: basemap.dataset_id, version: basemap.version, basemap, note };
 }
 
+/** The same-origin path of an override data file, or null when the name is not allowed. The manifest's `file` is
+ * untrusted, so beyond the schema's file-name check it is resolved against `<origin>/map-data/` and refused
+ * unless the result stays on that origin, directly inside /map-data/, and is exactly the given name: no other
+ * directory, no dot segment, no encoded or back slash, no query or fragment. */
+export function overrideFileUrl(file: string, origin: string | undefined = globalThis.location?.origin): string | null {
+  if (!origin || file === "" || /[/\\%?#]/.test(file) || file === "." || file === "..") return null;
+  let base: URL;
+  let resolved: URL;
+  try {
+    base = new URL(MAP_DATA_DIR, origin);
+    resolved = new URL(file, base);
+  } catch {
+    return null;
+  }
+  if (resolved.origin !== base.origin || !resolved.pathname.startsWith(MAP_DATA_DIR)) return null;
+  if (resolved.search !== "" || resolved.hash !== "" || resolved.pathname.slice(MAP_DATA_DIR.length) !== file) return null;
+  return resolved.pathname;
+}
+
 /** A rejection of a present override: the bundled basemap is used and the reason is reported. */
 async function rejected(bundled: () => Promise<unknown>, reason: string, customVersion?: string): Promise<BasemapResult> {
   const custom = customVersion ? `Custom basemap ${customVersion}` : "Custom basemap";
@@ -122,10 +141,12 @@ export async function loadBasemap({ fetchImpl, bundled = importBundled }: LoadBa
   if (!manifestCheck.ok) return rejected(bundled, `invalid manifest: ${manifestCheck.reason}`);
   const manifest = manifestCheck.value;
   const reject = (reason: string) => rejected(bundled, reason, manifest.version);
+  const dataUrl = overrideFileUrl(manifest.file);
+  if (dataUrl === null) return reject("manifest file name is not allowed");
 
   let dataResponse: Response;
   try {
-    dataResponse = await doFetch(`${MAP_DATA_DIR}${manifest.file}`, REQUEST);
+    dataResponse = await doFetch(dataUrl, REQUEST);
   } catch {
     return reject("fetch failed");
   }

@@ -1,7 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { BasemapResult, loadBasemap, MANIFEST_URL } from "@/features/dashboard/basemap/loadBasemap";
+import { BasemapResult, loadBasemap, MANIFEST_URL, overrideFileUrl } from "@/features/dashboard/basemap/loadBasemap";
 import { box, encodeJson, manifestFor, tinyBasemap } from "@/features/dashboard/basemap/testFixtures";
+
+/** Lets a test hand loadBasemap a manifest `file` the schema would refuse, to exercise the URL check behind it. */
+const schemaBypass = vi.hoisted(() => ({ file: null as string | null }));
+vi.mock("@/features/dashboard/basemap/schema", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/features/dashboard/basemap/schema")>();
+  return {
+    ...actual,
+    validateManifest: (input: unknown) => {
+      const checked = actual.validateManifest(input);
+      return checked.ok && schemaBypass.file !== null ? { ...checked, value: { ...checked.value, file: schemaBypass.file } } : checked;
+    },
+  };
+});
 
 const BUNDLED = tinyBasemap();
 const CUSTOM = tinyBasemap({ dataset_id: "custom-borders", version: "5.2.0", countries: [{ iso2: "AE", name: "UAE", polygons: [[box(51, 22, 57, 27)]] }] });
@@ -139,5 +152,37 @@ describe("loadBasemap", () => {
     const rejected = await loadBasemap({ fetchImpl: override(customManifest({ sha256: "1".repeat(64) })).fetchImpl, bundled: failing });
     expect(rejected.source).toBe("unavailable");
     expect(rejected.note).toBe("Custom basemap 5.2.0 was rejected (checksum mismatch). The bundled basemap is unavailable, so only the graticule is drawn.");
+  });
+});
+
+const REFUSED_FILES = ["../x.json", "%2e%2e%2fx.json", "https://evil.example/x.json", "//evil.example/x.json", "a/b.json", "a\\b.json", "..\\x.json", "\\\\evil.example\\x.json"];
+
+describe("overrideFileUrl", () => {
+  afterEach(() => {
+    schemaBypass.file = null;
+  });
+
+  it("resolves an allowed name to a same-origin path directly inside /map-data/", () => {
+    expect(overrideFileUrl("basemap-test.json")).toBe("/map-data/basemap-test.json");
+    expect(overrideFileUrl("basemap-test.json", "https://dcim.example")).toBe("/map-data/basemap-test.json");
+  });
+
+  it.each(REFUSED_FILES)("refuses %s", (file) => {
+    expect(overrideFileUrl(file)).toBeNull();
+    expect(overrideFileUrl(file, "https://dcim.example")).toBeNull();
+  });
+
+  it("refuses everything without an origin to resolve against", () => {
+    expect(overrideFileUrl("basemap-test.json", "")).toBeNull();
+    expect(overrideFileUrl("basemap-test.json", "null")).toBeNull();
+  });
+
+  it.each(REFUSED_FILES)("never fetches a refused manifest file %s and keeps the bundled basemap", async (file) => {
+    schemaBypass.file = file;
+    const { fetchImpl, calls } = override(customManifest());
+    const spy = vi.fn(fetchImpl);
+    await expectBundled(await loadBasemap({ fetchImpl: spy, bundled }), rejection("manifest file name is not allowed"));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(calls.map((c) => c.url)).toEqual([MANIFEST_URL]);
   });
 });
