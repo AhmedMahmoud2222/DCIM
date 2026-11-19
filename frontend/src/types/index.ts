@@ -1183,6 +1183,49 @@ export interface DashboardExceptionItem {
   message: string;
 }
 
+/** GET /dashboard/geography (Issue #365). Coordinates are null unless both are present and in range. */
+export interface GeographyCountry {
+  id: string;
+  name: string;
+  iso_code: string | null;
+  city_count: number;
+  site_count: number;
+}
+
+export interface GeographyCity {
+  id: string;
+  country_id: string;
+  name: string;
+  site_count: number;
+}
+
+export interface GeographySite {
+  id: string;
+  code: string;
+  name: string;
+  city_id: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export interface Geography {
+  /** "withheld" when the caller's scope may not see precise site coordinates: every site latitude/longitude
+   * is then null and the with/without-coordinates totals are null too. */
+  coordinates: "included" | "withheld";
+  totals: {
+    countries: number;
+    cities: number;
+    sites: number;
+    sites_with_coordinates: number | null;
+    sites_without_coordinates: number | null;
+  };
+  countries: GeographyCountry[];
+  cities: GeographyCity[];
+  sites: GeographySite[];
+  sites_truncated: boolean;
+  as_of: string;
+}
+
 // ------------------------------------------------------ Catalog Designer (Phase 10A)
 
 export const CATALOG_CATEGORIES = ["rack", "equipment", "network_device", "pdu", "ups", "power_panel", "sensor"] as const;

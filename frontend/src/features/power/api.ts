@@ -5,6 +5,7 @@ import {
   DashboardExceptionItem,
   DashboardSummary,
   EquipmentPowerSummary,
+  Geography,
   Page,
   PDUInstantiatedAsset,
   PowerConnection,
@@ -101,3 +102,4 @@ export const getDashboardSummary = (params?: { site_id?: string; building_id?: s
   return apiFetch<DashboardSummary>(`/dashboard/summary${q ? `?${q}` : ""}`);
 };
 export const getDashboardExceptions = () => apiFetch<DashboardExceptionItem[]>("/dashboard/exceptions");
+export const getGeography = () => apiFetch<Geography>("/dashboard/geography");
