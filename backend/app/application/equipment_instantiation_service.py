@@ -37,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.network.topology_lock import acquire_topology_lock
-from app.core.errors import NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.domain.catalog.designer_models import (
     CatalogModel,
     CatalogModelRevision,
@@ -284,6 +284,28 @@ async def connect_port(
             raise PortNotFound(f"PowerNode {target_power_node_id} not found.")
         if node.node_type != "pdu_outlet":
             raise InvalidPortTarget(f"PowerNode {target_power_node_id} is not a pdu_outlet (got {node.node_type!r}).")
+
+    if target_port_id is not None:
+        # Endpoint exclusivity: a target port may be claimed by at most one source port.
+        # A reconnect by this same source replaces its own row and is allowed, so exclude
+        # this source from the claim check. The topology lock held at the top of this
+        # function serialises this check with every other topology writer (cable creation,
+        # neighbour confirmation), so the check-and-write is race-free and no partial
+        # mutation can persist when this is rejected.
+        claimed_by_other = (
+            await db.execute(
+                select(PortConnection.id)
+                .where(
+                    PortConnection.target_port_id == target_port_id,
+                    PortConnection.source_port_id != source_port_id,
+                )
+                .with_for_update()
+            )
+        ).first()
+        if claimed_by_other is not None:
+            raise ConflictError(
+                "That port is already connected from another source. Disconnect the existing link first."
+            )
 
     existing = (
         await db.execute(

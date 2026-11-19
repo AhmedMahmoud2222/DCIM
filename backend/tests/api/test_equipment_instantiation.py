@@ -1,10 +1,18 @@
 """Phase 10B: POST /equipment/instantiate, GET /equipment/{id}/ports, and
 POST /equipment/{id}/ports/connect, end to end over HTTP — matching this repo's
-tests/api convention (test_catalog_designer_lifecycle.py, test_equipment.py)."""
+tests/api convention (test_catalog_designer_lifecycle.py, test_equipment.py).
+
+These tests require a real PostgreSQL database (the `db_engine`/`race` fixtures use
+`pg_advisory_xact_lock` and PostgreSQL-specific DDL). They cannot run against SQLite.
+"""
 
 import uuid
 
+import pytest
+
+from tests.api._network_inventory import make_device
 from tests.api._phase2_helpers import create_room
+from tests.integration.test_atomic_optimistic_concurrency import _scalar, race  # noqa: F401
 
 
 async def _admin(auth_headers) -> dict:
@@ -248,3 +256,198 @@ async def test_connect_port_requires_exactly_one_target(client, auth_headers):
         f"/api/v1/equipment/{server_resp.json()['id']}/ports/connect", json={"port_id": port_id}, headers=headers
     )
     assert resp.status_code == 422, resp.text
+
+
+async def _three_equipment_with_ports(client, headers):
+    """Two source equipments and one target equipment, each with one rear port `p1`."""
+    src_a = await make_device(client, headers, ["p1"], hostname="fan-src-a")
+    src_b = await make_device(client, headers, ["p1"], hostname="fan-src-b")
+    tgt_c = await make_device(client, headers, ["p1"], hostname="fan-tgt-c")
+    return src_a, src_b, tgt_c
+
+
+async def _connect(client, headers, equipment, port_id, *, target_port_id):
+    return await client.post(
+        f"/api/v1/equipment/{equipment['id']}/ports/connect",
+        json={"port_id": port_id, "target_port_id": target_port_id},
+        headers=headers,
+    )
+
+
+async def test_connect_port_rejects_target_claimed_by_another_source(client, auth_headers, db_engine):
+    """Fan-in must be rejected: A->C then B->C is a 409 and exactly one row targets C."""
+    headers = await auth_headers("Administrator")
+    src_a, src_b, tgt_c = await _three_equipment_with_ports(client, headers)
+    a_port = src_a["port_by_name"]["p1"]
+    b_port = src_b["port_by_name"]["p1"]
+    c_port = tgt_c["port_by_name"]["p1"]
+
+    first = await _connect(client, headers, src_a, a_port, target_port_id=c_port)
+    assert first.status_code == 201, first.text
+
+    second = await _connect(client, headers, src_b, b_port, target_port_id=c_port)
+    assert second.status_code == 409, second.text
+
+    # Exactly one connection row claims C as its target; B holds no outgoing connection.
+    target_rows = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=c_port
+    )
+    assert target_rows == 1
+    b_rows = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE source_port_id = :s", s=b_port
+    )
+    assert b_rows == 0
+
+    # The surviving connection is the first one: source A targets C.
+    a_rows = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE source_port_id = :s AND target_port_id = :t",
+        s=a_port, t=c_port,
+    )
+    assert a_rows == 1
+
+
+async def test_connect_port_allows_reconnect_same_source_to_same_target(client, auth_headers, db_engine):
+    """Reconnecting the same source port to the same target replaces nothing and is allowed."""
+    headers = await auth_headers("Administrator")
+    src_a, _src_b, tgt_c = await _three_equipment_with_ports(client, headers)
+    a_port = src_a["port_by_name"]["p1"]
+    c_port = tgt_c["port_by_name"]["p1"]
+
+    first = await _connect(client, headers, src_a, a_port, target_port_id=c_port)
+    assert first.status_code == 201, first.text
+    first_id = first.json()["id"]
+
+    second = await _connect(client, headers, src_a, a_port, target_port_id=c_port)
+    assert second.status_code == 201, second.text
+    # Same logical row (reconnect replaces in place), not a duplicate.
+    assert second.json()["id"] == first_id
+    target_rows = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=c_port
+    )
+    assert target_rows == 1
+
+
+async def test_connect_port_allows_reconnect_same_source_frees_previous_target(client, auth_headers, db_engine):
+    """Reconnecting the same source port to a new target frees the previous target."""
+    headers = await auth_headers("Administrator")
+    src_a, src_b, tgt_c = await _three_equipment_with_ports(client, headers)
+    a_port = src_a["port_by_name"]["p1"]
+    c_port = tgt_c["port_by_name"]["p1"]
+    b_port = src_b["port_by_name"]["p1"]
+
+    first = await _connect(client, headers, src_a, a_port, target_port_id=c_port)
+    assert first.status_code == 201, first.text
+
+    # Repoint A's port at B's port: C must be released and may be claimed by B.
+    second = await _connect(client, headers, src_a, a_port, target_port_id=b_port)
+    assert second.status_code == 201, second.text
+
+    target_rows_on_c = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=c_port
+    )
+    assert target_rows_on_c == 0  # C is free now
+    b_is_target = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=b_port
+    )
+    assert b_is_target == 1  # B is now the target of A's single connection
+
+
+async def test_connect_port_preserves_bidirectional_link(client, auth_headers, db_engine):
+    """Reversed endpoints are a legitimate bidirectional pair, not target fan-in: A->C then C->A is allowed.
+
+    Each port is the source of at most one connection and the target of at most one
+    connection, which is the cardinality this phase enforces. Only a target claimed by a
+    *different* source is rejected (see test_connect_port_rejects_target_claimed_by_another_source).
+    """
+    headers = await auth_headers("Administrator")
+    src_a, _src_b, tgt_c = await _three_equipment_with_ports(client, headers)
+    a_port = src_a["port_by_name"]["p1"]
+    c_port = tgt_c["port_by_name"]["p1"]
+
+    first = await _connect(client, headers, src_a, a_port, target_port_id=c_port)
+    assert first.status_code == 201, first.text
+
+    second = await _connect(client, headers, tgt_c, c_port, target_port_id=a_port)
+    assert second.status_code == 201, second.text
+
+    rows = await _scalar(db_engine, "SELECT count(*) FROM port_connection")
+    assert rows == 2  # A->C and C->A coexist; neither target is claimed twice
+
+
+async def test_connect_port_concurrent_target_fan_in_lets_exactly_one_win(client, auth_headers, db_engine, race):
+    """Two concurrent requests to connect different sources to the same target: exactly one wins.
+
+    Both take the topology lock, so they are provably in flight at the same time; the
+    lock serialises them and exactly one connection row survives.
+    """
+    headers = await auth_headers("Administrator")
+    src_a, src_b, tgt_c = await _three_equipment_with_ports(client, headers)
+    a_port = src_a["port_by_name"]["p1"]
+    b_port = src_b["port_by_name"]["p1"]
+    c_port = tgt_c["port_by_name"]["p1"]
+
+    calls = [
+        (
+            "POST",
+            f"/api/v1/equipment/{src_a['id']}/ports/connect",
+            {"json": {"port_id": a_port, "target_port_id": c_port}, "headers": headers},
+        ),
+        (
+            "POST",
+            f"/api/v1/equipment/{src_b['id']}/ports/connect",
+            {"json": {"port_id": b_port, "target_port_id": c_port}, "headers": headers},
+        ),
+    ]
+    responses = await race(
+        "SELECT pg_advisory_xact_lock(hashtext('dcim.network_topology'))", {}, calls
+    )
+    assert sorted(r.status_code for r in responses) == [201, 409], [r.text for r in responses]
+
+    target_rows = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=c_port
+    )
+    assert target_rows == 1
+    source_rows = await _scalar(
+        db_engine,
+        "SELECT count(*) FROM port_connection WHERE source_port_id IN (:a, :b)",
+        a=a_port, b=b_port,
+    )
+    assert source_rows == 1
+
+
+async def test_connect_port_rejection_persists_no_mutation(client, auth_headers, db_engine):
+    """A rejected fan-in connect leaves no new row, audit record or outbox event."""
+    headers = await auth_headers("Administrator")
+    src_a, src_b, tgt_c = await _three_equipment_with_ports(client, headers)
+    a_port = src_a["port_by_name"]["p1"]
+    b_port = src_b["port_by_name"]["p1"]
+    c_port = tgt_c["port_by_name"]["p1"]
+
+    first = await _connect(client, headers, src_a, a_port, target_port_id=c_port)
+    assert first.status_code == 201, first.text
+
+    target_before = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=c_port
+    )
+    audit_before = await _scalar(
+        db_engine, "SELECT count(*) FROM audit_log WHERE entity_id = :e", e=tgt_c["id"]
+    )
+    outbox_before = await _scalar(
+        db_engine, "SELECT count(*) FROM outbox_event WHERE aggregate_id = :e", e=tgt_c["id"]
+    )
+
+    second = await _connect(client, headers, src_b, b_port, target_port_id=c_port)
+    assert second.status_code == 409, second.text
+
+    target_after = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=c_port
+    )
+    assert target_after == target_before  # no new connection row
+    audit_after = await _scalar(
+        db_engine, "SELECT count(*) FROM audit_log WHERE entity_id = :e", e=tgt_c["id"]
+    )
+    outbox_after = await _scalar(
+        db_engine, "SELECT count(*) FROM outbox_event WHERE aggregate_id = :e", e=tgt_c["id"]
+    )
+    assert audit_after == audit_before  # no audit record for the rejected connect
+    assert outbox_after == outbox_before  # no outbox event
