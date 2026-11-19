@@ -11,9 +11,10 @@ reported. No workflow calls `.github/scripts/frontend_audit_gate.py`, and
 
 | File | Role |
 |---|---|
-| `.github/scripts/frontend_audit_gate.py` | Fail-closed wrapper. Stdlib only. `--mode strict` (default) or `--mode exception`. |
+| `.github/scripts/frontend_audit_gate.py` | Fail-closed wrapper and CLI. Stdlib only. `--mode strict` (default) or `--mode exception`. |
+| `.github/scripts/frontend_audit_report.py` | Validation and root-advisory analysis of `npm audit --json`. |
 | `.github/security-exceptions/frontend-audit-picomatch.json` | The owner's approval record. Shipped unapproved. |
-| `tests/ci/test_frontend_audit_gate.py` | Positive and negative tests, run by the existing `ci-policy` job. |
+| `tests/ci/test_frontend_audit_gate_{policy,inputs,sources}.py`, `tests/ci/frontend_audit_support.py` | Positive and negative tests and shared fixtures, run by the existing `ci-policy` job. |
 | `tests/ci/fixtures/frontend_audit_gate/` | Real `npm audit --json` output and registry data used as fixtures. |
 
 ## Threat model and trust boundaries
@@ -84,7 +85,7 @@ Do these in one reviewed PR, only after the owner has accepted the risk in writi
    `run: python3 .github/scripts/frontend_audit_gate.py --mode exception`
    (the step needs `GITHUB_TOKEN` in its environment for advisory API rate limits). Keep the
    non-blocking full-report step and every other step.
-3. Update `tests/ci/test_frontend_audit_gate.py::ActivationBoundaryTests`, which currently asserts
+3. Update `tests/ci/test_frontend_audit_gate_sources.py::ActivationBoundaryTests`, which currently asserts
    the exception is inactive, to assert the activated state. Updating it is the deliberate signal that
    activation was reviewed.
 4. Obtain independent review of the exact head. Remove the exception, and switch back to the plain
