@@ -249,7 +249,7 @@ describe("events page integration", () => {
     vi.mocked(telemetry.listAlarmHistory).mockResolvedValue({ items: [], next_cursor: null });
     renderWithProviders(<EventsPage />, { user: MANAGER });
     const tabs = await screen.findAllByRole("tab");
-    expect(tabs.map((t) => t.textContent?.replace(/\d+$/, "").trim())).toEqual(["Active", "History", "Incidents", "Collector health", "Notifications", "Integrations"]);
+    expect(tabs.map((t) => t.textContent?.replace(/\d+$/, "").trim())).toEqual(["Active", "History", "Infrastructure", "Incidents", "Collector health", "Notifications", "Integrations"]);
     await userEvent.click(screen.getByRole("tab", { name: "Incidents" }));
     expect(await screen.findByRole("button", { name: "BRK-1" })).toBeInTheDocument();
     expect(screen.queryByText(/No active or acknowledged alarm/)).not.toBeInTheDocument();

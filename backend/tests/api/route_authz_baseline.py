@@ -52,6 +52,7 @@ READ_ONLY_POSTS: dict[tuple[str, str], str] = {
 BASELINE: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {
     ('GET', '/api/v1/alarms'): ('permission', ('alarm:read',)),
     ('GET', '/api/v1/alarms/history'): ('permission', ('alarm:read',)),
+    ('GET', '/api/v1/alarms/overview'): ('permission', ('alarm:read',)),
     ('GET', '/api/v1/alarms/rules'): ('permission', ('alarm:read',)),
     ('POST', '/api/v1/alarms/rules'): ('permission', ('alarm:manage',)),
     ('PATCH', '/api/v1/alarms/rules/{rule_id}'): ('permission', ('alarm:manage',)),
@@ -178,6 +179,7 @@ BASELINE: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {
     ('GET', '/api/v1/countries'): ('permission', ('location:read',)),
     ('POST', '/api/v1/countries'): ('permission', ('location:manage',)),
     ('GET', '/api/v1/dashboard/exceptions'): ('permission', ('dashboard:read',)),
+    ('GET', '/api/v1/dashboard/geography'): ('permission', ('location:read',)),
     ('GET', '/api/v1/dashboard/summary'): ('permission', ('dashboard:read',)),
     ('GET', '/api/v1/discovery/devices'): ('permission', ('discovery:read',)),
     ('GET', '/api/v1/discovery/neighbors'): ('permission', ('discovery:read',)),

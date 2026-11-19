@@ -43,6 +43,8 @@ export interface Alarm {
   rule_id: string;
   integration_id: string;
   managed_asset_id: string | null;
+  /** The managed asset's type ("rack", "equipment", ...); null or absent when unknown. Never guess a route without it. */
+  managed_asset_type?: string | null;
   subject_key: string;
   status: "ACTIVE" | "ACKNOWLEDGED" | "CLEARED";
   /** Explicit severity from the backend; independent of the workflow `status`. */
@@ -102,6 +104,26 @@ export const listAlarmHistory = (filters: AlarmHistoryFilters = {}) => {
 
 export const getAlarmHistory = (assetId: string, start?: Date, end?: Date, cursor?: string) =>
   listAlarmHistory({ managedAssetId: assetId, start, end, cursor });
+
+export type AlarmSeverity = Alarm["severity"];
+
+/** GET /alarms/overview (Issue #365). `counts` are exact server totals for the acknowledgement scope and
+ * ignore the severity filter; `items` hold at most `limit` alarms matching both. */
+export interface AlarmOverview {
+  scope: { include_acknowledged: boolean; severity: AlarmSeverity | null };
+  counts: { critical: number; warning: number; info: number; total: number };
+  items: Alarm[];
+  matching_total: number;
+  limit: number;
+  truncated: boolean;
+  as_of: string;
+}
+
+export const getAlarmOverview = ({ severity = null, includeAcknowledged = false }: { severity?: AlarmSeverity | null; includeAcknowledged?: boolean } = {}) => {
+  const params = new URLSearchParams({ include_acknowledged: String(includeAcknowledged) });
+  if (severity) params.set("severity", severity);
+  return apiFetch<AlarmOverview>(`/alarms/overview?${params.toString()}`);
+};
 
 export const acknowledgeAlarm = (id: string) => apiFetch<Alarm>(`/alarms/${id}/acknowledge`, { method: "POST" });
 export const getOpenAlarms = (status?: "ACTIVE" | "ACKNOWLEDGED", limit = 100) =>

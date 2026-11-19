@@ -100,6 +100,8 @@ REVIEWED_REACHABLE = {
     ("GET", "/api/v1/catalog/revisions/{revision_id}/graphics/{side}/thumbnail"),
     ("GET", "/api/v1/cities"),
     ("GET", "/api/v1/countries"),
+    # Issue #365: scope-aware location:read; counts and lists cover visible sites only (test_dashboard_geography.py).
+    ("GET", "/api/v1/dashboard/geography"),
     ("GET", "/api/v1/equipment"),
     ("GET", "/api/v1/equipment-models"),
     ("GET", "/api/v1/equipment-models/{equipment_model_id}/revisions"),
@@ -202,7 +204,7 @@ async def test_the_reachable_set_is_exactly_the_reviewed_set(client, auth_header
     admin = await auth_headers("Administrator")
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
-    assert len(REVIEWED_REACHABLE) == 108, "the reviewed reachable set is pinned at exactly 108 operations"
+    assert len(REVIEWED_REACHABLE) == 109, "the reviewed reachable set is pinned at exactly 109 operations"
     assert reachable == REVIEWED_REACHABLE, (
         f"new reachable: {sorted(reachable - REVIEWED_REACHABLE)}; no longer reachable: {sorted(REVIEWED_REACHABLE - reachable)}"
     )
