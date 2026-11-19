@@ -5,16 +5,18 @@ import { AccessRestricted } from "@/components/feedback/AccessRestricted";
 import type { Access } from "@/features/dashboard/dashboardModel";
 import { ApiError } from "@/lib/apiClient";
 
-interface QueryLike<T> {
+export interface QueryLike<T> {
   isLoading: boolean;
   error: unknown;
   data: T | undefined;
   /** React Query's fetch status; "paused" means the request is waiting for the network. */
   fetchStatus?: string;
+  /** When the data on screen was last received (ms since epoch); 0 or absent when unknown. */
+  dataUpdatedAt?: number;
   refetch: () => unknown;
 }
 
-export type SectionState = "loading" | "restricted" | "error" | "empty" | "ready";
+export type SectionState = "loading" | "restricted" | "error" | "stale" | "empty" | "ready";
 
 interface DashboardSectionProps<T> {
   id: string;
@@ -30,6 +32,9 @@ interface DashboardSectionProps<T> {
   isEmpty?: (data: T) => boolean;
   /** Small summary next to the heading, shown only when the section has data. */
   aside?: (data: T) => ReactNode;
+  /** Controls shown above the records or the empty message whenever a response is on screen (ready,
+   * empty or stale), so a filter that produced nothing can still be changed. */
+  controls?: (data: T) => ReactNode;
   /** Shown under the records, or under the empty message, but never while loading, restricted or in
    * error. Use it for information that stays true when the main list is empty. */
   footer?: ReactNode;
@@ -39,15 +44,16 @@ interface DashboardSectionProps<T> {
 
 const defaultIsEmpty = (data: unknown) => data == null || (Array.isArray(data) && data.length === 0);
 
-/** One independently loaded part of the dashboard. It is always in exactly one of five states, and
- * only `ready` shows records:
+/** One independently loaded part of the dashboard. It is always in exactly one of six states:
  *
  * - loading: the request is in flight or paused for the network, or the profile has not loaded so
  *   access is not yet known. A query with no data and no error is never empty: empty needs a
  *   successful response;
  * - restricted: the user is known not to hold the permission (no request is made), or the backend
  *   answered 403. Never rendered as zero records, a healthy state or a failure;
- * - error: any other failure; says so and offers a retry, and never as an empty list;
+ * - error: any other failure with nothing loaded earlier; says so and offers a retry, never an empty list;
+ * - stale: a refresh failed but an earlier response is still on screen; it stays visible and the
+ *   section says it may be out of date and offers a retry;
  * - empty: a successful response with no records;
  * - ready: the records. */
 export function DashboardSection<T>({
@@ -60,6 +66,7 @@ export function DashboardSection<T>({
   emptyText,
   isEmpty = defaultIsEmpty,
   aside,
+  controls,
   footer,
   className = "",
   children,
@@ -67,12 +74,16 @@ export function DashboardSection<T>({
   let state: SectionState;
   if (access === "denied") state = "restricted";
   else if (access === "unknown" || query.isLoading) state = "loading";
-  else if (query.error) state = query.error instanceof ApiError && query.error.status === 403 ? "restricted" : "error";
+  else if (query.error instanceof ApiError && query.error.status === 403) state = "restricted";
+  else if (query.error) state = query.data === undefined ? "error" : "stale";
   else if (query.data === undefined) state = "loading";
   else if (isEmpty(query.data)) state = "empty";
   else state = "ready";
 
-  const data = state === "ready" ? (query.data as T) : undefined;
+  const shown = state === "ready" || state === "empty" || state === "stale" ? (query.data as T) : undefined;
+  const showRecords = shown !== undefined && !isEmpty(shown);
+  const showEmpty = shown !== undefined && !showRecords;
+  const loadedAt = query.dataUpdatedAt ? new Date(query.dataUpdatedAt).toLocaleTimeString() : null;
 
   return (
     <section
@@ -85,7 +96,7 @@ export function DashboardSection<T>({
         <h2 id={`${id}-title`} className="text-base font-semibold text-fg-primary">
           {title}
         </h2>
-        {data !== undefined && aside ? <div className="flex flex-wrap items-center gap-2 text-xs text-fg-secondary">{aside(data)}</div> : null}
+        {showRecords && aside ? <div className="flex flex-wrap items-center gap-2 text-xs text-fg-secondary">{aside(shown)}</div> : null}
       </div>
 
       {state === "loading" && (
@@ -97,13 +108,32 @@ export function DashboardSection<T>({
       {state === "error" && (
         <TableError error={query.error} what={what} permission={permission} headingLevel={3} onRetry={() => void query.refetch()} />
       )}
-      {state === "empty" && (
+      {state === "stale" && (
+        <div
+          data-testid={`${id}-stale`}
+          role="status"
+          className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-tone-caution-fg bg-tone-caution-bg px-3 py-2 text-xs text-tone-caution-fg"
+        >
+          <span>
+            Could not refresh {what}.{loadedAt ? ` Showing data loaded at ${loadedAt}` : " Showing earlier data"}; it may be out of date.
+          </span>
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            className="min-h-11 min-w-11 rounded-sm border border-line-control bg-surface-panel px-3 py-1 font-medium text-fg-primary hover:bg-surface-hover"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      {shown !== undefined && controls?.(shown)}
+      {showEmpty && (
         <p data-testid={`${id}-empty`} className="text-sm text-fg-secondary">
           {emptyText}
         </p>
       )}
-      {data !== undefined && children(data)}
-      {(state === "ready" || state === "empty") && footer}
+      {showRecords && children(shown)}
+      {shown !== undefined && footer}
     </section>
   );
 }

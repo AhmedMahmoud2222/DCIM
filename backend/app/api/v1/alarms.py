@@ -3,22 +3,27 @@
 import base64
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import AwareDatetime, BaseModel, Field, field_validator
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.api.deps import get_db
+from app.application.access_control import AccessScope, equipment_visible_clause, rack_visible_clause
 from app.application.alarm_service import acknowledge_alarm, disable_rule, resolve_rule_unit, rule_unit_status, update_rule
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
 from app.domain.alarm.models import ALARM_STATUSES, DEFAULT_ALARM_SEVERITY, RULE_TYPES, Alarm, AlarmRule
+from app.domain.identity.models import ManagedAsset
 from app.domain.telemetry.models import TelemetryReading
 from app.domain.telemetry.registry import REGISTRY_VERSION, convert_to_presentation, registry_snapshot, validate_metric_rule
 
@@ -108,6 +113,9 @@ class AlarmOut(BaseModel):
     rule_id: uuid.UUID
     integration_id: uuid.UUID
     managed_asset_id: uuid.UUID | None
+    # Additive: the managed asset's type ("rack", "equipment", ...) so clients can pick the right detail page. None when
+    # the alarm has no managed asset or the asset no longer exists. Only ever returned for alarms the caller receives.
+    managed_asset_type: str | None = None
     subject_key: str
     status: str
     # Explicit severity (critical / warning / info), independent of the workflow `status` above.
@@ -124,6 +132,49 @@ class AlarmOut(BaseModel):
 class AlarmHistoryPage(BaseModel):
     items: list[AlarmOut]
     next_cursor: str | None = None
+
+
+AlarmSeverity = Literal["critical", "warning", "info"]
+OVERVIEW_DEFAULT_LIMIT = 7
+OVERVIEW_MAX_LIMIT = 50
+
+
+class AlarmOverviewScopeOut(BaseModel):
+    include_acknowledged: bool
+    severity: AlarmSeverity | None
+
+
+class AlarmSeverityCountsOut(BaseModel):
+    critical: int
+    warning: int
+    info: int
+    total: int
+
+
+class AlarmOverviewOut(BaseModel):
+    scope: AlarmOverviewScopeOut
+    counts: AlarmSeverityCountsOut
+    items: list[AlarmOut]
+    matching_total: int
+    limit: int
+    truncated: bool
+    as_of: datetime
+
+
+def alarm_visible_clause(scope: AccessScope) -> ColumnElement[bool]:
+    """Defence in depth: alarm:read is not scope-aware today (restricted callers get 403), but should it become so, a
+    restricted caller sees only alarms whose managed asset is visible equipment or a visible rack, exactly as
+    GET /managed-assets resolves them. Alarms without a managed asset are hidden from restricted callers
+    (`NULL IN (...)` is never true)."""
+    if scope.unrestricted:
+        return true()
+    visible_assets = select(ManagedAsset.id).where(
+        or_(
+            and_(ManagedAsset.asset_type == "equipment", equipment_visible_clause(scope, ManagedAsset.id)),
+            and_(ManagedAsset.asset_type == "rack", rack_visible_clause(scope, ManagedAsset.id)),
+        )
+    )
+    return Alarm.managed_asset_id.in_(visible_assets)
 
 
 @router.post("/rules", status_code=201)
@@ -294,7 +345,9 @@ async def list_alarms(
     stmt = select(Alarm).order_by(Alarm.opened_at.desc()).limit(limit)
     if status:
         stmt = stmt.where(Alarm.status == status)
-    return [_out(row) for row in (await db.execute(stmt)).scalars().all()]
+    rows = (await db.execute(stmt)).scalars().all()
+    types = await _asset_types(db, rows)
+    return [_out(row, types.get(row.managed_asset_id)) for row in rows]
 
 
 @router.get("/history", response_model=AlarmHistoryPage)
@@ -340,7 +393,58 @@ async def alarm_history(
     rows = (await db.execute(stmt)).scalars().all()
     page, has_more = rows[:limit], len(rows) > limit
     next_cursor = _encode_cursor(page[-1]) if has_more and page else None
-    return AlarmHistoryPage(items=[_out(row) for row in page], next_cursor=next_cursor)
+    types = await _asset_types(db, page)
+    return AlarmHistoryPage(items=[_out(row, types.get(row.managed_asset_id)) for row in page], next_cursor=next_cursor)
+
+
+@router.get("/overview", response_model=AlarmOverviewOut)
+async def alarm_overview(
+    severity: AlarmSeverity | None = Query(default=None),
+    include_acknowledged: bool = False,
+    limit: int = Query(default=OVERVIEW_DEFAULT_LIMIT, ge=1, le=OVERVIEW_MAX_LIMIT),
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("alarm:read")),
+) -> AlarmOverviewOut:
+    """Exact per-severity counts for the acknowledgement scope plus the newest `limit` alarms matching `severity`.
+
+    Counts never depend on `severity` or `limit`. Counts, `matching_total` and items come from ONE statement (a
+    one-row aggregate LEFT JOINed to the limited item subquery), so they share a snapshot and cannot disagree."""
+    statuses = ("ACTIVE", "ACKNOWLEDGED") if include_acknowledged else ("ACTIVE",)
+    in_scope = and_(Alarm.status.in_(statuses), alarm_visible_clause(ctx.scope))
+    matches = Alarm.severity == severity if severity is not None else true()
+    counts = (
+        select(
+            func.count().filter(Alarm.severity == "critical").label("critical"),
+            func.count().filter(Alarm.severity == "warning").label("warning"),
+            func.count().filter(Alarm.severity == "info").label("info"),
+            func.count().filter(matches).label("matching"),
+        )
+        .where(in_scope)
+        .subquery("counts")
+    )
+    items = (
+        select(Alarm).where(in_scope, matches).order_by(Alarm.opened_at.desc(), Alarm.id.desc()).limit(limit).subquery("items")
+    )
+    item = aliased(Alarm, items)
+    stmt = (
+        select(counts.c.critical, counts.c.warning, counts.c.info, counts.c.matching, item)
+        .select_from(counts)
+        .outerjoin(items, true())
+        .order_by(item.opened_at.desc(), item.id.desc())
+    )
+    rows = (await db.execute(stmt)).all()
+    critical, warning, info, matching = rows[0][:4]
+    alarms = [row[4] for row in rows if row[4] is not None]
+    types = await _asset_types(db, alarms)
+    return AlarmOverviewOut(
+        scope=AlarmOverviewScopeOut(include_acknowledged=include_acknowledged, severity=severity),
+        counts=AlarmSeverityCountsOut(critical=critical, warning=warning, info=info, total=critical + warning + info),
+        items=[_out(row, types.get(row.managed_asset_id)) for row in alarms],
+        matching_total=matching,
+        limit=limit,
+        truncated=matching > len(alarms),
+        as_of=datetime.now(UTC),
+    )
 
 
 @router.post("/{alarm_id}/acknowledge", response_model=AlarmOut)
@@ -351,11 +455,21 @@ async def acknowledge(
     if alarm is None:
         raise NotFoundError("Alarm not found.")
     await acknowledge_alarm(db, alarm=alarm, actor_user_id=ctx.user.id)
+    types = await _asset_types(db, [alarm])
     await db.commit()
-    return _out(alarm)
+    return _out(alarm, types.get(alarm.managed_asset_id))
 
 
-def _out(row: Alarm) -> AlarmOut:
+async def _asset_types(db: AsyncSession, rows: Sequence[Alarm]) -> dict[uuid.UUID | None, str]:
+    """One query resolving the managed-asset type of the given (already authorised) alarms; missing assets are absent."""
+    ids = {row.managed_asset_id for row in rows if row.managed_asset_id is not None}
+    if not ids:
+        return {}
+    result = await db.execute(select(ManagedAsset.id, ManagedAsset.asset_type).where(ManagedAsset.id.in_(ids)))
+    return {asset_id: asset_type for asset_id, asset_type in result.all()}
+
+
+def _out(row: Alarm, managed_asset_type: str | None = None) -> AlarmOut:
     unit = row.details.get("unit")
     version = row.details.get("registry_version")
     presentation = None
@@ -367,6 +481,7 @@ def _out(row: Alarm) -> AlarmOut:
         rule_id=row.rule_id,
         integration_id=row.integration_id,
         managed_asset_id=row.managed_asset_id,
+        managed_asset_type=managed_asset_type,
         subject_key=row.subject_key,
         status=row.status,
         severity=row.severity,

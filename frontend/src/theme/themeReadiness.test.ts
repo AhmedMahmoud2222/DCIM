@@ -21,6 +21,12 @@ const TOKEN_ONLY = [
   "features/status/StatusBadges.tsx",
   "features/dashboard/DashboardSection.tsx",
   "features/dashboard/DashboardPage.tsx",
+  "features/dashboard/AlarmsPanel.tsx",
+  "features/dashboard/GeographyPanel.tsx",
+  "features/dashboard/ExceptionsPreview.tsx",
+  "features/dashboard/CollectorsPanel.tsx",
+  "features/dashboard/InventoryPanel.tsx",
+  "features/telemetry/InfrastructureExceptionsView.tsx",
 ];
 
 /** Components that sit on a dark panel and must never use the text shades below 4.5:1 on it. */
@@ -119,9 +125,12 @@ describe("narrow-screen layout guards", () => {
     expect(shell).toContain('<span className="min-w-0 [overflow-wrap:anywhere]">{group.label}</span>');
   });
 
-  it("underlines the links the Dashboard places inside running text, so they do not rely on colour", () => {
-    const page = read("features/dashboard/DashboardPage.tsx");
-    expect((page.match(/className="text-link underline underline-offset-2"/g) ?? []).length).toBe(3);
-    expect(page).not.toContain('className="text-link hover:underline"');
-  });
+  it.each(["features/dashboard/AlarmsPanel.tsx", "features/dashboard/ExceptionsPreview.tsx", "features/dashboard/CollectorsPanel.tsx", "features/dashboard/GeographyPanel.tsx"])(
+    "underlines every text link in %s, so the links do not rely on colour",
+    (file) => {
+      const page = read(file);
+      expect(page).toContain("text-link underline underline-offset-2");
+      expect(page).not.toContain("text-link hover:underline");
+    },
+  );
 });

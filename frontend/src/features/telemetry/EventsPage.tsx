@@ -1,20 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { QueryStatus } from "@/components/data/QueryStatus";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { useAuth } from "@/features/auth/useAuth";
+import { alarmAssetTarget } from "@/features/dashboard/dashboardModel";
 import { OperationsViews, OpsView } from "@/features/operations/OperationsViews";
 import { AlarmWorkflowStatus, ExceptionSeverity } from "@/features/status/StatusBadges";
 import { Alarm, acknowledgeAlarm, getOpenAlarms, listAlarmHistory } from "@/features/telemetry/api";
+import { InfrastructureExceptionsView } from "@/features/telemetry/InfrastructureExceptionsView";
 
-type ViewMode = "active" | "history" | OpsView;
+type ViewMode = "active" | "history" | "infrastructure" | OpsView;
 const OPS_TABS: { id: OpsView; label: string }[] = [
   { id: "incidents", label: "Incidents" },
   { id: "collectors", label: "Collector health" },
   { id: "notifications", label: "Notifications" },
   { id: "integrations", label: "Integrations" },
 ];
+const VIEW_IDS: ReadonlyArray<ViewMode> = ["active", "history", "infrastructure", ...OPS_TABS.map((tab) => tab.id)];
+const parseView = (value: string | null): ViewMode => (VIEW_IDS as ReadonlyArray<string | null>).includes(value) ? (value as ViewMode) : "active";
 type StatusFilter = "ALL" | Alarm["status"];
 
 function csvCell(value: string | number | null | undefined) {
@@ -40,7 +45,20 @@ function exportCsv(alarms: Alarm[], fileName: string) {
 
 export function EventsPage() {
   const queryClient = useQueryClient();
-  const [view, setView] = useState<ViewMode>("active");
+  const { user } = useAuth();
+  // The open tab lives in ?view=, so /events?view=infrastructure deep-links and a tab change is shareable.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = parseView(searchParams.get("view"));
+  const setView = (next: ViewMode) =>
+    setSearchParams(
+      (current) => {
+        const params = new URLSearchParams(current);
+        if (next === "active") params.delete("view");
+        else params.set("view", next);
+        return params;
+      },
+      { replace: true },
+    );
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const [preset, setPreset] = useState("24");
@@ -48,7 +66,8 @@ export function EventsPage() {
   const [customEnd, setCustomEnd] = useState("");
   const [cursor, setCursor] = useState<string | undefined>();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const isOps = view !== "active" && view !== "history";
+  const isAlarmView = view === "active" || view === "history";
+  const isOps = !isAlarmView && view !== "infrastructure";
 
   const activeQuery = useQuery({ queryKey: ["events", "active"], queryFn: () => getOpenAlarms("ACTIVE") });
   const acknowledgedQuery = useQuery({ queryKey: ["events", "acknowledged"], queryFn: () => getOpenAlarms("ACKNOWLEDGED") });
@@ -88,6 +107,7 @@ export function EventsPage() {
     );
   }, [requestedAlarms, search]);
   const selected = visibleAlarms.find((alarm) => alarm.id === selectedId) ?? visibleAlarms[0] ?? null;
+  const selectedAsset = selected ? alarmAssetTarget(selected, user?.permission_codes) : null;
   const loading = view === "active" ? activeQuery.isLoading || acknowledgedQuery.isLoading : historyQuery.isLoading;
   const error = view === "active" ? activeQuery.error || acknowledgedQuery.error : historyQuery.error;
   // A list exists only once every request behind the view has answered. A paused or disabled request
@@ -123,7 +143,7 @@ export function EventsPage() {
           <button
             type="button"
             onClick={() => exportCsv(visibleAlarms, `dcim-events-${view}.csv`)}
-            disabled={visibleAlarms.length === 0 || isOps}
+            disabled={visibleAlarms.length === 0 || !isAlarmView}
             className="whitespace-nowrap rounded-sm border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
           >
             Export current results CSV
@@ -159,6 +179,18 @@ export function EventsPage() {
             >
               History
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "infrastructure"}
+              onClick={() => {
+                setView("infrastructure");
+                setSelectedId(null);
+              }}
+              className={`rounded-sm px-3 py-1.5 text-sm ${view === "infrastructure" ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}
+            >
+              Infrastructure
+            </button>
             {OPS_TABS.map((tab) => (
               <button
                 key={tab.id}
@@ -175,7 +207,7 @@ export function EventsPage() {
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap gap-2" hidden={isOps}>
+          <div className="flex flex-wrap gap-2" hidden={!isAlarmView}>
             {view === "history" && (
               <>
                 <select
@@ -249,12 +281,13 @@ export function EventsPage() {
       </div>
 
       {isOps && <OperationsViews view={view as OpsView} />}
-      {!isOps && (
+      {view === "infrastructure" && <InfrastructureExceptionsView />}
+      {isAlarmView && (
         <div className="mt-4">
           <QueryStatus query={requestState} what="events" permission="alarm:read" columns={5} />
         </div>
       )}
-      {!isOps && ready && !loading && !error && visibleAlarms.length === 0 && (
+      {isAlarmView && ready && !loading && !error && visibleAlarms.length === 0 && (
         <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-fg-secondary">
           {view === "active"
             ? "No active or acknowledged alarm condition is currently reported."
@@ -262,7 +295,7 @@ export function EventsPage() {
         </div>
       )}
 
-      {!isOps && ready && !loading && !error && visibleAlarms.length > 0 && (
+      {isAlarmView && ready && !loading && !error && visibleAlarms.length > 0 && (
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="overflow-hidden rounded-sm border border-slate-800 bg-slate-900">
             <div role="region" aria-label="Events table" tabIndex={0} className="relative overflow-x-auto">
@@ -361,11 +394,12 @@ export function EventsPage() {
                   <dd className="break-all font-mono text-xs">{selected.rule_id}</dd>
                 </div>
               </dl>
-              {selected.managed_asset_id && (
-                <Link className="mt-4 inline-flex text-sm font-medium text-blue-400 hover:underline" to={`/equipment/${selected.managed_asset_id}`}>
-                  Open affected equipment →
+              {selectedAsset?.kind === "link" && (
+                <Link className="mt-4 inline-flex text-sm font-medium text-link hover:underline" to={selectedAsset.to} aria-label={`Open ${selectedAsset.label.toLowerCase()} for ${selected.subject_key}`}>
+                  Open affected {selectedAsset.label.toLowerCase()} →
                 </Link>
               )}
+              {selectedAsset?.kind === "text" && <p className="mt-4 font-mono text-xs text-fg-secondary">Affected asset: {selectedAsset.label}</p>}
               {selected.status === "ACTIVE" && (
                 <button
                   type="button"
