@@ -33,7 +33,7 @@ already-instantiated Equipment's ports/inlets — only `instantiate_equipment` (
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.network.topology_lock import acquire_topology_lock
@@ -286,25 +286,40 @@ async def connect_port(
             raise InvalidPortTarget(f"PowerNode {target_power_node_id} is not a pdu_outlet (got {node.node_type!r}).")
 
     if target_port_id is not None:
-        # Endpoint exclusivity: a target port may be claimed by at most one source port.
-        # A reconnect by this same source replaces its own row and is allowed, so exclude
-        # this source from the claim check. The topology lock held at the top of this
-        # function serialises this check with every other topology writer (cable creation,
-        # neighbour confirmation), so the check-and-write is race-free and no partial
-        # mutation can persist when this is rejected.
-        claimed_by_other = (
+        # Complete endpoint-occupancy check: a port may participate in at most one logical
+        # connection, either as source or target. A port may not be reused merely because
+        # its role switches between source and target (e.g. A->B then B->C, or A->B then
+        # C->A). A reconnect by this same source replaces its own row and is allowed, so
+        # that row is excluded from the occupancy check. The topology lock held at the top
+        # of this function serialises this check with every other topology writer (cable
+        # creation, neighbour confirmation), so the check-and-write is race-free and no
+        # partial mutation can persist when this is rejected.
+        occupied = (
             await db.execute(
                 select(PortConnection.id)
                 .where(
-                    PortConnection.target_port_id == target_port_id,
-                    PortConnection.source_port_id != source_port_id,
+                    or_(
+                        # Source port already occupied as a destination by another connection.
+                        and_(
+                            PortConnection.target_port_id == source_port_id,
+                            PortConnection.source_port_id != source_port_id,
+                        ),
+                        # Target port already occupied as a destination by another source.
+                        and_(
+                            PortConnection.target_port_id == target_port_id,
+                            PortConnection.source_port_id != source_port_id,
+                        ),
+                        # Target port already occupied as a source of another connection.
+                        PortConnection.source_port_id == target_port_id,
+                    )
                 )
                 .with_for_update()
             )
         ).first()
-        if claimed_by_other is not None:
+        if occupied is not None:
             raise ConflictError(
-                "That port is already connected from another source. Disconnect the existing link first."
+                "One or both ports are already occupied in another logical connection. "
+                "Disconnect the existing link first."
             )
 
     existing = (
