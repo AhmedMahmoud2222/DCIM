@@ -2,10 +2,42 @@ import json
 import re
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from cryptography.fernet import Fernet
 from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
+
+from app.core import secret_policy
+
+
+def _database_password_category(url: str) -> str | None:
+    """Why the database URL's password is unacceptable in production, or None.
+
+    Two independent parsers must agree on the credentials: SQLAlchemy's (what the engine really connects
+    with) and a strict RFC 3986 split that confines userinfo to the authority and ignores any '@' in the
+    path, query or fragment. A `?password=` query value takes precedence, as in the asyncpg/psycopg connect
+    arguments. A disagreement means the URL is ambiguous and is rejected rather than guessed at."""
+    try:
+        parsed = make_url(url)
+        from_query = parsed.query.get("password")
+        engine_password = parsed.password
+        if from_query is not None:
+            engine_password = from_query[-1] if isinstance(from_query, tuple) else from_query
+        split = urlsplit(url)
+        strict_query = parse_qs(split.query).get("password")
+        strict_password = strict_query[-1] if strict_query else (unquote(split.password) if split.password is not None else None)
+    except (ArgumentError, ValueError):
+        return "not parseable as a database URL"
+    for password in (engine_password, strict_password):
+        category = secret_policy.check_database_password(password)
+        if category:
+            return category
+    if engine_password != strict_password:
+        return "ambiguous credentials (URL parsers disagree)"
+    return None
 
 
 class Settings(BaseSettings):
@@ -176,6 +208,30 @@ class Settings(BaseSettings):
             except (ValueError, TypeError):
                 raise ValueError(f"Credential encryption key v{number} is not a valid Fernet key.") from None
         return versions
+
+    @model_validator(mode="after")
+    def _production_rejects_insecure_secrets(self) -> "Settings":
+        """DB-08 (Issue #359): fail closed in production on empty, example or placeholder secrets.
+
+        The contract lives in app.core.secret_policy and is shared with the deployment preflight.
+        Messages name variables and categories only; no configured value is ever included."""
+        if self.environment != "production":
+            return self
+        findings: list[tuple[str, str]] = []
+        category = secret_policy.classify_secret(self.jwt_secret_key)
+        if category:
+            findings.append(("JWT_SECRET_KEY", category))
+        category = _database_password_category(self.database_url)
+        if category:
+            findings.append(("DATABASE_URL password", category))
+        # v1 has only its historical min_length check outside production. Fernet() is what every
+        # encrypt/decrypt calls, so a v1 key that ever sealed a row passes this identical rule.
+        if not secret_policy.is_valid_fernet_key(self.credential_encryption_key):
+            findings.append(("CREDENTIAL_ENCRYPTION_KEY", secret_policy.INVALID_FERNET))
+        if findings:
+            detail = secret_policy.format_findings(findings)
+            raise ValueError(f"Insecure configuration rejected for ENVIRONMENT=production (values withheld): {detail}")
+        return self
 
     @model_validator(mode="after")
     def _production_requires_malware_scanning(self) -> "Settings":

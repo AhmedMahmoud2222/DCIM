@@ -28,6 +28,29 @@ acquire_lock() {
     flock -w "${LOCK_TIMEOUT:-300}" 200 || { fail 'deployment lock unavailable'; return 1; }
 }
 
+# Rejects empty/example/placeholder secrets with the same policy the application enforces at startup
+# (backend/app/core/secret_policy.py, stdlib only). The policy is read from the REQUESTED RELEASE
+# ($RELEASE_SHA), not from whatever is checked out now, so a release is judged by the contract it will run
+# under. Only if that commit predates the policy file does it fall back to the current checkout's copy.
+# It runs after the SHA is verified but before Docker, Compose, checkout, migration or any state change.
+# Secrets are read from the environment and DEPLOY_DIR/.env (environment wins, as in Compose); none is
+# passed on a command line, and only variable names and categories are printed.
+secrets_preflight() {
+    local policy status=0
+    command -v python3 >/dev/null || { fail 'python3 is required for secret validation'; return 1; }
+    policy="$(mktemp "${TMPDIR:-/tmp}/secret-policy.XXXXXXXX")" || { fail 'cannot create temporary policy file'; return 1; }
+    if git -C "$REPO_ROOT" cat-file -e "$RELEASE_SHA:backend/app/core/secret_policy.py" 2>/dev/null; then
+        git -C "$REPO_ROOT" show "$RELEASE_SHA:backend/app/core/secret_policy.py" > "$policy" || { rm -f "$policy"; fail 'cannot read release secret policy'; return 1; }
+    elif [[ -f "$REPO_ROOT/backend/app/core/secret_policy.py" ]]; then
+        cp "$REPO_ROOT/backend/app/core/secret_policy.py" "$policy"
+    else
+        rm -f "$policy"; fail 'secret policy module missing'; return 1
+    fi
+    python3 -I "$policy" "$DEPLOY_DIR/.env" || status=$?
+    rm -f "$policy"
+    (( status == 0 )) || { fail 'insecure or placeholder production secrets'; return 1; }
+}
+
 validate() {
     [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { fail 'full canonical SHA required'; return 1; }
     [[ "$TARGET" == staging ]] || { fail 'production deployment is disabled'; return 1; }
@@ -36,6 +59,7 @@ validate() {
     git -C "$REPO_ROOT" fetch --quiet origin main
     git -C "$REPO_ROOT" merge-base --is-ancestor "$RELEASE_SHA" origin/main || { fail 'SHA is not on origin/main'; return 1; }
     GITHUB_TOKEN="${GITHUB_TOKEN:-}" python3 "$REPO_ROOT/.github/scripts/verify_release_sha.py" "$RELEASE_SHA" >/dev/null || { fail 'GitHub release evidence not verified'; return 1; }
+    secrets_preflight || return 1
     if ! docker info >/dev/null || ! docker compose version >/dev/null; then
         fail 'Docker unavailable'; return 1
     fi

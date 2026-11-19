@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[2] / 'scripts/deploy-docker-compose.sh'
+POLICY = Path(__file__).resolve().parents[2] / 'backend/app/core/secret_policy.py'
 KEY = 'A'*43+'='
 
 
@@ -27,6 +28,8 @@ class ScriptTests(unittest.TestCase):
         (self.repo/'scripts').mkdir()
         (self.repo/'.github/scripts').mkdir(parents=True)
         shutil.copyfile(SOURCE, self.repo/'scripts/deploy-docker-compose.sh')
+        (self.repo/'backend/app/core').mkdir(parents=True)
+        shutil.copyfile(POLICY, self.repo/'backend/app/core/secret_policy.py')
         (self.repo/'.github/scripts/verify_release_sha.py').write_text('import sys\nsys.exit(0)\n')
         (self.repo/'docker-compose.yml').write_text('services: {}\n')
         (self.repo/'docker-compose.production.yml').write_text('services: {}\n')
@@ -114,6 +117,91 @@ class ScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
         self.assertIn('ROLLBACK FAILED', result.stderr)
         self.assertEqual((self.repo/'.deployment-sha').read_text().strip(),self.old)
+
+    # DB-08 (#359): placeholder/example secrets are refused before ANY deployment-side effect.
+    def assert_rejected_before_mutation(self, env, expected_name, *leaked):
+        head = git(self.repo, 'rev-parse', 'HEAD')
+        result = self.run_script(env)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn(expected_name, output)
+        self.assertIn('insecure or placeholder production secrets', result.stderr)
+        for value in leaked:
+            self.assertNotIn(value, output)
+        self.assertFalse(self.calls.exists(), 'Docker or Compose was invoked before secrets were validated')
+        self.assertEqual(git(self.repo, 'rev-parse', 'HEAD'), head)
+        self.assertEqual((self.repo/'.deployment-sha').read_text().strip(), self.old)
+        self.assertFalse((self.repo/'.previous-deployment-sha').exists())
+        self.assertEqual((self.repo/'.env').read_text(), 'PREVIOUS_CONFIG=preserved\n')
+
+    def test_jwt_example_rejected_before_any_mutation(self):
+        example = 'CHANGE_ME_AT_LEAST_32_CHARACTERS'
+        self.assert_rejected_before_mutation(dict(self.env, JWT_SECRET_KEY=example), 'JWT_SECRET_KEY', example)
+
+    def test_database_example_passwords_rejected_before_any_mutation(self):
+        self.assert_rejected_before_mutation(dict(self.env, DCIM_APP_PASSWORD='CHANGE_ME_APP'), 'DCIM_APP_PASSWORD', 'CHANGE_ME_APP')
+        self.assert_rejected_before_mutation(dict(self.env, POSTGRES_PASSWORD='CHANGE_ME_SUPERUSER'), 'POSTGRES_PASSWORD', 'CHANGE_ME_SUPERUSER')
+
+    def test_invalid_fernet_key_rejected_before_any_mutation(self):
+        bad = 'x' * 44
+        self.assert_rejected_before_mutation(dict(self.env, CREDENTIAL_ENCRYPTION_KEY=bad), 'CREDENTIAL_ENCRYPTION_KEY', bad)
+
+    def test_dotenv_placeholder_is_rejected_when_the_environment_does_not_override_it(self):
+        env = {k: v for k, v in self.env.items() if k != 'JWT_SECRET_KEY'}
+        (self.repo/'.env').write_text('JWT_SECRET_KEY=CHANGE_ME_AT_LEAST_32_CHARACTERS\n')
+        result = self.run_script(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('JWT_SECRET_KEY', result.stderr)
+        self.assertNotIn('CHANGE_ME_AT_LEAST_32_CHARACTERS', result.stdout + result.stderr)
+        self.assertFalse(self.calls.exists())
+
+    def test_environment_value_overrides_dotenv_placeholder(self):
+        (self.repo/'.env').write_text('JWT_SECRET_KEY=CHANGE_ME_AT_LEAST_32_CHARACTERS\n')
+        result = self.run_script(dict(self.env, JWT_SECRET_KEY='generated-' + 'k' * 40))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unusual_generated_passwords_are_accepted(self):
+        env = dict(self.env, DCIM_APP_PASSWORD="p@ss/w:rd#1?&=+%$'\"x9Zk", POSTGRES_PASSWORD='Zq8-Lm_2.v~Tn' + 'a' * 20)
+        result = self.run_script(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def run_release(self, release, env):
+        # Fixed argv, shell=False; the SHA is one this test just created in its own temporary repository.
+        return subprocess.run(['bash', str(self.repo/'scripts/deploy-docker-compose.sh'), release, 'staging'],  # nosec B603
+                              cwd=self.repo, env=env, capture_output=True, text=True, timeout=20)
+
+    # Provenance (AGY P3, PR #362): the requested release's own policy judges the secrets.
+    def commit_release(self, message, policy_text):
+        policy = self.repo/'backend/app/core/secret_policy.py'
+        if policy_text is None:
+            git(self.repo, 'rm', '-q', 'backend/app/core/secret_policy.py')
+        else:
+            policy.write_text(policy_text)
+            git(self.repo, 'add', 'backend/app/core/secret_policy.py')
+        git(self.repo, 'commit', '-qm', message)
+        sha = git(self.repo, 'rev-parse', 'HEAD')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        git(self.repo, 'checkout', '-q', '--detach', self.new)  # the deploy host is still on the previous release
+        return sha
+
+    def test_release_policy_not_the_checked_out_policy_is_applied(self):
+        stricter = 'import sys\nprint("release-policy-applied", file=sys.stderr)\nsys.exit(1)\n'
+        release = self.commit_release('release with stricter policy', stricter)
+        result = self.run_release(release, self.env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('release-policy-applied', result.stderr)
+        self.assertFalse(self.calls.exists())
+        self.assertEqual(git(self.repo, 'rev-parse', 'HEAD'), self.new)
+        self.assertEqual((self.repo/'.deployment-sha').read_text().strip(), self.old)
+
+    def test_release_that_predates_the_policy_is_judged_by_the_current_one(self):
+        release = self.commit_release('release without policy file', None)
+        env = dict(self.env, JWT_SECRET_KEY='CHANGE_ME_AT_LEAST_32_CHARACTERS')
+        result = self.run_release(release, env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('JWT_SECRET_KEY', result.stderr)
+        self.assertNotIn('CHANGE_ME_AT_LEAST_32_CHARACTERS', result.stdout + result.stderr)
+        self.assertFalse(self.calls.exists())
 
     def test_two_process_lock_and_stable_inode(self):
         env = dict(self.env, MOCK_SLEEP='3')
