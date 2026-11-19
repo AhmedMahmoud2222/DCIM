@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     # load capacity, whose semantics/rounding require a separate owner decision.
     catalog_decimal_publication_projection: bool = False
 
+    # Issue #365: precise site coordinates on GET /dashboard/geography are withheld from callers with a
+    # restricted (non-global) scope by default. Setting this to true is an explicit operator authorization
+    # to return latitude/longitude of in-scope sites to restricted callers too; it never widens scope.
+    geography_restricted_coordinates_enabled: bool = False
+
     # DCIM01 PDF datasheet import (docs/plans/DCIM01_PDF_DATASHEET_IMPORT_PLAN_v2.md).
     # Every limit is configurable; the defaults are the approved values.
     catalog_documents_storage_root: str = "media/catalog/documents"

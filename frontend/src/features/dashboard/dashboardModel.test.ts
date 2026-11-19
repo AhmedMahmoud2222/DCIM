@@ -2,16 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   accessFor,
-  ALARM_LIST_LIMIT,
+  alarmAssetTarget,
   collectorsNeedingAttention,
   connectivityCounts,
-  countLabel,
   DASHBOARD_PERMISSIONS,
+  exceptionHref,
+  exceptionPreview,
+  isKnownSeverity,
   severityCounts,
-  sortAlarmsNewestFirst,
   sortExceptionsBySeverity,
+  toggleSeverity,
+  unrecognisedAlarmCount,
 } from "@/features/dashboard/dashboardModel";
-import type { Alarm } from "@/features/telemetry/api";
 import type { CurrentUser } from "@/lib/authStore";
 import type { Collector, DashboardExceptionItem } from "@/types";
 
@@ -23,13 +25,11 @@ const user = (...permission_codes: string[]): CurrentUser => ({
   permission_codes,
 });
 
-const exception = (code: string, severity: string): DashboardExceptionItem =>
-  ({ code, severity, object_type: "rack", object_id: code, message: code }) as DashboardExceptionItem;
+const exception = (code: string, severity: string, object_type = "rack"): DashboardExceptionItem =>
+  ({ code, severity, object_type, object_id: code, message: code }) as DashboardExceptionItem;
 
 const collector = (name: string, health: string): Collector =>
   ({ id: name, name, health, collector_type: "edge", site_id: null, status: "active", version_string: null, last_heartbeat_at: null, seconds_since_heartbeat: null }) as unknown as Collector;
-
-const alarm = (id: string, opened_at: string) => ({ id, opened_at, status: "ACTIVE" }) as unknown as Alarm;
 
 describe("accessFor", () => {
   it("is unknown before the profile loads, never denied", () => {
@@ -47,9 +47,10 @@ describe("accessFor", () => {
     expect(accessFor(user("dashboard:manage"), "dashboard:read")).toBe("denied");
   });
 
-  it("names the backend permission for each source", () => {
+  it("names the backend permission for each source, with geography behind location:read", () => {
     expect(DASHBOARD_PERMISSIONS).toEqual({
       alarms: "alarm:read",
+      geography: "location:read",
       exceptions: "dashboard:read",
       collectors: "collector:read",
       inventory: "dashboard:read",
@@ -57,25 +58,24 @@ describe("accessFor", () => {
   });
 });
 
-describe("countLabel", () => {
-  it("is exact below the request limit and says 'or more' at it", () => {
-    expect(countLabel(0, ALARM_LIST_LIMIT)).toBe("0");
-    expect(countLabel(99, ALARM_LIST_LIMIT)).toBe("99");
-    expect(countLabel(100, ALARM_LIST_LIMIT)).toBe("100 or more");
-    expect(countLabel(250, ALARM_LIST_LIMIT)).toBe("100 or more");
-  });
-});
-
-describe("sortAlarmsNewestFirst", () => {
-  it("orders by opened time, newest first, without mutating the input", () => {
-    const input = [alarm("old", "2026-01-01T00:00:00Z"), alarm("new", "2026-03-01T00:00:00Z"), alarm("mid", "2026-02-01T00:00:00Z")];
-    expect(sortAlarmsNewestFirst(input).map((a) => a.id)).toEqual(["new", "mid", "old"]);
-    expect(input.map((a) => a.id)).toEqual(["old", "new", "mid"]);
+describe("alarm severity helpers", () => {
+  it("knows exactly critical, warning and info", () => {
+    expect(["critical", "warning", "info"].every(isKnownSeverity)).toBe(true);
+    expect(isKnownSeverity("fatal")).toBe(false);
+    expect(isKnownSeverity("CRITICAL")).toBe(false);
+    expect(isKnownSeverity(null)).toBe(false);
   });
 
-  it("keeps an unparseable time in place instead of throwing", () => {
-    const result = sortAlarmsNewestFirst([alarm("a", "not-a-date"), alarm("b", "2026-01-01T00:00:00Z")]);
-    expect(result).toHaveLength(2);
+  it("treats the counter and the selector as one control: picking the active level returns to All", () => {
+    expect(toggleSeverity("all", "critical")).toBe("critical");
+    expect(toggleSeverity("critical", "critical")).toBe("all");
+    expect(toggleSeverity("critical", "warning")).toBe("warning");
+  });
+
+  it("derives the unrecognised share only from the server total, never negative", () => {
+    expect(unrecognisedAlarmCount({ critical: 1, warning: 2, info: 3, total: 8 })).toBe(2);
+    expect(unrecognisedAlarmCount({ critical: 1, warning: 2, info: 3, total: 6 })).toBe(0);
+    expect(unrecognisedAlarmCount({ critical: 5, warning: 0, info: 0, total: 3 })).toBe(0);
   });
 });
 
@@ -106,6 +106,25 @@ describe("exceptions", () => {
     });
     expect(severityCounts([])).toEqual({ critical: 0, warning: 0, info: 0, unrecognised: 0 });
   });
+
+  it("previews the three most severe, counts from the whole list, and calls out hidden Critical", () => {
+    const items = [exception("w1", "warning"), ...Array.from({ length: 5 }, (_, i) => exception(`c${i}`, "critical")), exception("i1", "info")];
+    const preview = exceptionPreview(items);
+    expect(preview.shown.map((e) => e.code)).toEqual(["c0", "c1", "c2"]);
+    expect(preview.hidden).toBe(4);
+    expect(preview.hiddenCritical).toBe(2);
+    expect(preview.counts).toEqual({ critical: 5, warning: 1, info: 1, unrecognised: 0 });
+  });
+
+  it("hides nothing at three or fewer", () => {
+    expect(exceptionPreview([exception("a", "info")])).toMatchObject({ hidden: 0, hiddenCritical: 0 });
+  });
+
+  it("drills equipment to its page and power nodes or unknown types to the power topology", () => {
+    expect(exceptionHref({ object_type: "equipment", object_id: "eq 1" })).toBe("/equipment/eq%201");
+    expect(exceptionHref({ object_type: "power_node", object_id: "pn-1" })).toBe("/power");
+    expect(exceptionHref({ object_type: "rack", object_id: "r-1" })).toBe("/power");
+  });
 });
 
 describe("collector connectivity", () => {
@@ -121,5 +140,50 @@ describe("collector connectivity", () => {
 
   it("lists nothing when every collector is healthy", () => {
     expect(collectorsNeedingAttention([collector("a", "healthy")])).toEqual([]);
+  });
+});
+
+describe("alarmAssetTarget", () => {
+  const ALL = ["equipment:read", "rack:read"];
+  const asset = (managed_asset_type: string | null | undefined, managed_asset_id: string | null = "1a2b3c4d-5e6f-7a8b-9c0d-112233445566") => ({
+    managed_asset_id,
+    managed_asset_type,
+  });
+
+  it("links equipment to /equipment/<id> for a user with equipment:read", () => {
+    expect(alarmAssetTarget(asset("equipment", "eq-1"), ALL)).toEqual({ kind: "link", to: "/equipment/eq-1", label: "Equipment" });
+  });
+
+  it("links a rack to /racks/<id> for a user with rack:read, never to /equipment", () => {
+    expect(alarmAssetTarget(asset("rack", "rk-1"), ALL)).toEqual({ kind: "link", to: "/racks/rk-1", label: "Rack" });
+  });
+
+  it("renders nothing for an alarm without a managed asset", () => {
+    expect(alarmAssetTarget(asset("equipment", null), ALL)).toBeNull();
+    expect(alarmAssetTarget(asset(null, null), ALL)).toBeNull();
+  });
+
+  it("never guesses a link when the type is missing", () => {
+    expect(alarmAssetTarget(asset(null), ALL)).toEqual({ kind: "text", label: "Asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset(undefined), ALL)).toEqual({ kind: "text", label: "Asset 1a2b3c4d" });
+  });
+
+  it("is a plain reference for types without a detail page, naming known types only", () => {
+    expect(alarmAssetTarget(asset("pdu"), ALL)).toEqual({ kind: "text", label: "PDU asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("cable"), ALL)).toEqual({ kind: "text", label: "Cable asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("garbage<script>"), ALL)).toEqual({ kind: "text", label: "Asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("constructor"), ALL)).toEqual({ kind: "text", label: "Asset 1a2b3c4d" });
+  });
+
+  it("is a plain reference when the user lacks the detail page's permission or is not loaded", () => {
+    expect(alarmAssetTarget(asset("equipment"), ["rack:read"])).toEqual({ kind: "text", label: "Equipment asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("rack"), ["equipment:read"])).toEqual({ kind: "text", label: "Rack asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("rack"), user("rack:read_all").permission_codes)).toEqual({ kind: "text", label: "Rack asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("rack"), null)).toEqual({ kind: "text", label: "Rack asset 1a2b3c4d" });
+    expect(alarmAssetTarget(asset("rack"), undefined)).toEqual({ kind: "text", label: "Rack asset 1a2b3c4d" });
+  });
+
+  it("encodes the id into the path", () => {
+    expect(alarmAssetTarget(asset("rack", "a/b?c"), ALL)).toEqual({ kind: "link", to: "/racks/a%2Fb%3Fc", label: "Rack" });
   });
 });
