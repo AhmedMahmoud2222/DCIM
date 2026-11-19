@@ -321,6 +321,33 @@ async def connect_port(
                 "One or both ports are already occupied in another logical connection. "
                 "Disconnect the existing link first."
             )
+    else:
+        # Power-node relationship (target_port_id is None). Endpoint exclusivity still
+        # applies: the source port must not already be the destination of another logical
+        # connection. A->B then B->PDU reuses B as a source after B was a target, which
+        # the invariant forbids. The reverse (B->PDU then A->B) is rejected by the
+        # port-to-port check above on the second call (B is already a source via its
+        # power-node row, caught by "target port occupied as a source"). A reconnect by
+        # this same source replaces its own row and is handled by the `existing` path
+        # below, so no same-source exclusion is needed here: source_port_id is unique,
+        # so the only row with source_port_id == source_port_id is this source's own.
+        occupied_as_target = (
+            await db.execute(
+                select(PortConnection.id)
+                .where(
+                    and_(
+                        PortConnection.target_port_id == source_port_id,
+                        PortConnection.source_port_id != source_port_id,
+                    )
+                )
+                .with_for_update()
+            )
+        ).first()
+        if occupied_as_target is not None:
+            raise ConflictError(
+                "This port is already occupied as a destination in another logical connection. "
+                "Disconnect the existing link first."
+            )
 
     existing = (
         await db.execute(

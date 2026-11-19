@@ -838,7 +838,7 @@ async def connect_port_endpoint(
     except PortConnectionOwnedByCable as exc:
         await db.rollback()
         raise ConflictError(exc.detail) from exc
-    except ConflictError as exc:
+    except ConflictError:
         # Target-port exclusivity rejection from connect_port: no write was performed,
         # roll back defensively and let the global ApiError handler return 409.
         await db.rollback()

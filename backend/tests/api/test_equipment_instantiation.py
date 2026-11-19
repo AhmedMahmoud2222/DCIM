@@ -8,6 +8,8 @@ These tests require a real PostgreSQL database (the `db_engine`/`race` fixtures 
 
 import uuid
 
+from sqlalchemy import text
+
 from tests.api._network_inventory import make_device
 from tests.api._phase2_helpers import create_room
 from tests.integration.test_atomic_optimistic_concurrency import _scalar, race  # noqa: F401
@@ -264,10 +266,10 @@ async def _three_equipment_with_ports(client, headers):
     return src_a, src_b, tgt_c
 
 
-async def _connect(client, headers, equipment, port_id, *, target_port_id):
+async def _connect(client, headers, equipment, port_id, *, target_port_id=None, target_power_node_id=None):
     return await client.post(
         f"/api/v1/equipment/{equipment['id']}/ports/connect",
-        json={"port_id": port_id, "target_port_id": target_port_id},
+        json={"port_id": port_id, "target_port_id": target_port_id, "target_power_node_id": target_power_node_id},
         headers=headers,
     )
 
@@ -410,6 +412,149 @@ async def test_connect_port_rejects_source_occupied_as_target(client, auth_heade
     assert b_as_source == 0
 
 
+async def _make_pdu_outlet_power_node(db_engine) -> uuid.UUID:
+    """Insert a standalone pdu_outlet PowerNode (+PDUOutlet row) via raw SQL and return its id.
+
+    A pdu_outlet PowerNode needs an owning_asset_id pointing at a ManagedAsset of type
+    'pdu' (asset_reference_exclusive constraint), plus a PDUOutlet child row.
+    """
+    pdu_asset_id = uuid.uuid4()
+    node_id = uuid.uuid4()
+    async with db_engine.connect() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO managed_asset (id, asset_type, asset_tag, lifecycle_status, external_ids) "
+                "VALUES (:id, 'pdu', :tag, 'planned', '{}')"
+            ),
+            {"id": pdu_asset_id, "tag": f"PDU-{uuid.uuid4().hex[:8]}"},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO power_node (id, node_type, owning_asset_id, label, retired_at) "
+                "VALUES (:id, 'pdu_outlet', :owning, :label, NULL)"
+            ),
+            {"id": node_id, "owning": pdu_asset_id, "label": "PDU Outlet 1"},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO pdu_outlet (power_node_id, pdu_asset_id, outlet_number, label, state) "
+                "VALUES (:node, :asset, 1, 'PDU Outlet 1', 'unknown')"
+            ),
+            {"node": node_id, "asset": pdu_asset_id},
+        )
+        await conn.commit()
+    return node_id
+
+
+async def test_connect_port_rejects_power_node_source_already_occupied_as_target(
+    client, auth_headers, db_engine
+):
+    """Sequence B: A->B then B->PDU is rejected — B cannot switch from target to power-node source.
+
+    After A->B, B is occupied as a destination. Using B as a source for a power-node
+    relationship (B->PDU) switches B's role, which the endpoint-exclusivity invariant
+    forbids. Symmetric with test_connect_port_rejects_source_occupied_as_target.
+    """
+    headers = await auth_headers("Administrator")
+    src_a, src_b, _tgt_c = await _three_equipment_with_ports(client, headers)
+    a_port = src_a["port_by_name"]["p1"]
+    b_port = src_b["port_by_name"]["p1"]
+    pdu_node = await _make_pdu_outlet_power_node(db_engine)
+
+    first = await _connect(client, headers, src_a, a_port, target_port_id=b_port)
+    assert first.status_code == 201, first.text
+
+    # B is already occupied as a destination (of A->B); using B as a power-node source is rejected.
+    second = await _connect(client, headers, src_b, b_port, target_power_node_id=str(pdu_node))
+    assert second.status_code == 409, second.text
+
+    rows = await _scalar(db_engine, "SELECT count(*) FROM port_connection")
+    assert rows == 1
+    b_as_source = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE source_port_id = :s", s=b_port
+    )
+    assert b_as_source == 0
+    b_as_target = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=b_port
+    )
+    assert b_as_target == 1  # A->B survives
+
+
+async def test_connect_port_rejects_power_node_target_as_port_source(
+    client, auth_headers, db_engine
+):
+    """Sequence A: B->PDU then A->B is rejected — B cannot be a power-node source then a port target.
+
+    After B->PDU, B is occupied as a source. Using B as a target for A->B switches B's
+    role, which the endpoint-exclusivity invariant forbids. Symmetric with Sequence B.
+    """
+    headers = await auth_headers("Administrator")
+    src_a, src_b, _tgt_c = await _three_equipment_with_ports(client, headers)
+    a_port = src_a["port_by_name"]["p1"]
+    b_port = src_b["port_by_name"]["p1"]
+    pdu_node = await _make_pdu_outlet_power_node(db_engine)
+
+    first = await _connect(client, headers, src_b, b_port, target_power_node_id=str(pdu_node))
+    assert first.status_code == 201, first.text
+
+    # B is already occupied as a source (of B->PDU); using B as a port target is rejected.
+    second = await _connect(client, headers, src_a, a_port, target_port_id=b_port)
+    assert second.status_code == 409, second.text
+
+    rows = await _scalar(db_engine, "SELECT count(*) FROM port_connection")
+    assert rows == 1
+    b_as_target = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=b_port
+    )
+    assert b_as_target == 0
+    b_as_source = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE source_port_id = :s", s=b_port
+    )
+    assert b_as_source == 1  # B->PDU survives
+
+
+async def test_connect_port_concurrent_power_node_and_port_reverse_lets_exactly_one_win(client, auth_headers, db_engine, race):  # noqa: F811
+    """Concurrent B->PDU and A->B: exactly one wins, no duplicate or cross-role occupancy.
+
+    Both take the topology lock; the lock serialises them and exactly one connection row
+    survives. B participates in exactly one logical connection (as source OR as target),
+    never both.
+    """
+    headers = await auth_headers("Administrator")
+    src_a, src_b, _tgt_c = await _three_equipment_with_ports(client, headers)
+    a_port = src_a["port_by_name"]["p1"]
+    b_port = src_b["port_by_name"]["p1"]
+    pdu_node = await _make_pdu_outlet_power_node(db_engine)
+
+    calls = [
+        (
+            "POST",
+            f"/api/v1/equipment/{src_b['id']}/ports/connect",
+            {"json": {"port_id": b_port, "target_power_node_id": str(pdu_node)}, "headers": headers},
+        ),
+        (
+            "POST",
+            f"/api/v1/equipment/{src_a['id']}/ports/connect",
+            {"json": {"port_id": a_port, "target_port_id": b_port}, "headers": headers},
+        ),
+    ]
+    responses = await race(
+        "SELECT pg_advisory_xact_lock(hashtext('dcim.network_topology'))", {}, calls
+    )
+    assert sorted(r.status_code for r in responses) == [201, 409], [r.text for r in responses]
+
+    # Exactly one persisted logical edge; B occupies exactly one role.
+    rows = await _scalar(db_engine, "SELECT count(*) FROM port_connection")
+    assert rows == 1
+    b_as_source = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE source_port_id = :s", s=b_port
+    )
+    b_as_target = await _scalar(
+        db_engine, "SELECT count(*) FROM port_connection WHERE target_port_id = :t", t=b_port
+    )
+    assert b_as_source + b_as_target == 1
+
+
 async def test_connect_port_concurrent_target_fan_in_lets_exactly_one_win(client, auth_headers, db_engine, race):  # noqa: F811
     """Two concurrent requests to connect different sources to the same target: exactly one wins.
 
@@ -455,7 +600,9 @@ async def test_connect_port_concurrent_reversed_endpoints_lets_exactly_one_win(c
     """A source-target role reversal during concurrent creation: exactly one winner.
 
     A->C and C->A run concurrently under the topology lock. Exactly one persists;
-    the loser's rejected request writes no connection row, audit record or outbox event.
+    connection-row counts confirm no duplicate logical edge is created. Audit/outbox
+    non-emission for the rejected request is asserted separately by
+    test_connect_port_rejection_persists_no_mutation.
     """
     headers = await auth_headers("Administrator")
     src_a, _src_b, tgt_c = await _three_equipment_with_ports(client, headers)
