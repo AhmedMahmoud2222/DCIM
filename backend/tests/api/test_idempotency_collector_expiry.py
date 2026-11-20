@@ -156,15 +156,20 @@ async def test_t33_collector_claims_use_the_collector_ttl_and_user_claims_keep_2
     )
     assert user.status_code == 201
 
-    async def hours(where: str, **params) -> float:
-        return float((await db_session.execute(text(
-            f"SELECT extract(epoch FROM (expires_at - created_at)) / 3600 FROM idempotency_key WHERE {where}"
-        ), params)).scalar_one())
+    async def collector_hours(dedup_key: str) -> float:
+        stmt = text(
+            "SELECT extract(epoch FROM (expires_at - created_at)) / 3600 FROM idempotency_key WHERE key LIKE :k"
+        )
+        return float((await db_session.execute(stmt, {"k": f"%:{dedup_key}"})).scalar_one())
 
-    assert await hours("key LIKE :k", k=f"%:{default_record['dedup_key']}") == pytest.approx(72, abs=0.1)
-    assert await hours("key LIKE :k", k=f"%:{configured_record['dedup_key']}") == pytest.approx(36, abs=0.1)
-    assert await hours("endpoint = 'POST:/managed-assets' AND principal LIKE 'user:%' "
-                       "AND created_at > now() - interval '5 minutes'") == pytest.approx(24, abs=0.1)
+    user_stmt = text(
+        "SELECT extract(epoch FROM (expires_at - created_at)) / 3600 FROM idempotency_key "
+        "WHERE endpoint = 'POST:/managed-assets' AND principal LIKE 'user:%' "
+        "AND created_at > now() - interval '5 minutes'"
+    )
+    assert await collector_hours(default_record["dedup_key"]) == pytest.approx(72, abs=0.1)
+    assert await collector_hours(configured_record["dedup_key"]) == pytest.approx(36, abs=0.1)
+    assert float((await db_session.execute(user_stmt)).scalar_one()) == pytest.approx(24, abs=0.1)
     assert timedelta(hours=get_settings().collector_idempotency_ttl_hours) > timedelta(hours=24, seconds=300)
 
 
