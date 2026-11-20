@@ -109,6 +109,22 @@ class Settings(BaseSettings):
     nonce_retention_seconds: int = Field(default=3600, ge=3600)
     heartbeat_retention_days: int = Field(default=30, ge=30)
 
+    # DB-03 (#357): idempotency ledger lifetime. User endpoints keep a fixed 24 h window (idempotency.py);
+    # collector ingestion is configurable and MUST exceed the Edge Collector's own replay window
+    # (queue retention_seconds, default 24 h, plus the 300 s maximum retry delay) with a margin. Central
+    # cannot read the edge value, so the 36 h floor is a guard, not proof: confirm the effective edge
+    # retention at every deployment (docs/implementation/IDEMPOTENCY_EXPIRY.md).
+    collector_idempotency_ttl_hours: int = Field(default=72, ge=36)
+
+    # DB-03 purge of expired idempotency rows. DISABLED unless an operator explicitly authorizes it;
+    # while disabled the task returns without opening a database session or issuing SQL.
+    idempotency_purge_enabled: bool = False
+    idempotency_purge_grace_seconds: int = Field(default=3600, ge=3600)
+    idempotency_purge_batch_size: int = Field(default=500, ge=1, le=5000)
+    idempotency_purge_max_runtime_seconds: float = Field(default=30.0, gt=0, le=240)
+    idempotency_purge_pause_ms: int = Field(default=50, ge=0, le=5000)
+    idempotency_purge_statement_timeout_ms: int = Field(default=2000, ge=1, le=2000)
+
     api_v1_prefix: str = "/api/v1"
 
     log_level: str = "INFO"
