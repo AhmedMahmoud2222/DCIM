@@ -260,7 +260,6 @@ async def test_network_port_failure_transitive_hop_through_patch_panel(db_sessio
     server = await _instantiate(db_session, port_count=1, psu_quantity=0)
     [switch_port] = await list_equipment_ports(db_session, equipment_id=switch.id)
     [panel_port] = await list_equipment_ports(db_session, equipment_id=panel.id)
-    [server_port] = await list_equipment_ports(db_session, equipment_id=server.id)
 
     # switch_port -> panel_port: panel is directly impacted (hop 1)
     await connect_port(db_session, source_port_id=switch_port.id, target_port_id=panel_port.id, target_power_node_id=None, cable_id=None, status="active")
