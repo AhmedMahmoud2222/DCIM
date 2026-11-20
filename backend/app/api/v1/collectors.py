@@ -7,7 +7,7 @@ NEVER the user JWT)."""
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, TypeVar
 
 from fastapi import APIRouter, Depends, Header, Request
@@ -35,6 +35,7 @@ from app.application.network.neighbor_evidence import InvalidNeighborPayload
 from app.application.network.neighbor_service import apply_scan_marker, ingest_neighbor
 from app.application.network.profile_service import build_plan
 from app.application.rbac import require_permission
+from app.core.config import get_settings
 from app.core.errors import ApiError, NotFoundError, UnauthorizedCollectorError
 from app.core.logging import get_logger
 from app.domain.integration.models import Collector, CollectorCapability
@@ -495,6 +496,8 @@ async def ingest_batch(
     # which expires `collector`; reading `collector.id` in a later iteration would then
     # lazy-load outside an awaited context and raise MissingGreenlet.
     principal = idem.collector_principal(collector_id)
+    # DB-03: collector claims live longer than user claims; the floor keeps this above the edge replay window.
+    claim_ttl = timedelta(hours=get_settings().collector_idempotency_ttl_hours)
     results: list[IngestRecordResult] = []
     for record in body.records:
         if record.record_type != "device" and not _attributes_within_bound(record.raw_attributes):
@@ -515,7 +518,7 @@ async def ingest_batch(
         try:
             outcome = await idem.get_or_claim(
                 db, principal=principal, key=f"{collector_id}:{record.dedup_key}",
-                endpoint="collector_ingest", request_hash=request_hash,
+                endpoint="collector_ingest", request_hash=request_hash, ttl=claim_ttl,
             )
         except IdempotencyConflict:
             results.append(
