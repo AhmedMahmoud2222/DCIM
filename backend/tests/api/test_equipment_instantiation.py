@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from tests.api._network_inventory import make_device
 from tests.api._phase2_helpers import create_room
-from tests.integration.test_atomic_optimistic_concurrency import _scalar, race  # noqa: F401
+from tests.conftest import _scalar, race  # noqa: F401
 
 
 async def _admin(auth_headers) -> dict:
