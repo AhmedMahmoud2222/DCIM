@@ -588,6 +588,7 @@ async def ingest_batch(
                     await ingest_discovery(
                         db, integration_id=record.integration_id, external_identifier=record.external_identifier,
                         raw_attributes=enriched_attrs, correlation_id=None, causation_id=body.batch_id,
+                        observed_at=record.occurred_at,
                     )
                 await idem.complete_claim(db, outcome.claim, response_status=200, response_body={"status": "accepted"})
             # The savepoint above released cleanly (no exception) -- persist it for

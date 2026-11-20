@@ -141,7 +141,9 @@ async def test_sim_09_delayed_delivery_preserves_occurred_at(client, auth_header
     assert "received_at" in device["raw_attributes"]
 
 
-async def test_sim_10_out_of_order_delivery_last_write_wins_on_last_seen(client, auth_headers):
+async def test_sim_10_out_of_order_delivery_keeps_the_newest_observation(client, auth_headers):
+    """DISC-ORDER-01: delivery order no longer decides the stored state -- observation
+    time does. The older record is still acknowledged, but is a no-op."""
     headers = await auth_headers("DCIM Manager")
     sim, integration = await _register_and_assign(client, headers)
     later = datetime.now(UTC).isoformat()
@@ -150,11 +152,10 @@ async def test_sim_10_out_of_order_delivery_last_write_wins_on_last_seen(client,
     r1 = await sim.send_ingest([_record(integration["id"], "10.0.0.52", occurred_at=later)])
     r2 = await sim.send_ingest([_record(integration["id"], "10.0.0.52", occurred_at=earlier)])
     assert r1.status_code == 200 and r2.status_code == 200
+    assert r2.json()["results"][0]["status"] == "accepted"
     devices = (await client.get("/api/v1/discovery/devices", headers=headers)).json()
     device = next(d for d in devices if d["external_identifier"] == "10.0.0.52")
-    # The upsert keeps only the LAST delivered occurred_at, not the chronologically
-    # latest one -- documented behavior, not asserted as a defect here (see report §11).
-    assert device["raw_attributes"]["occurred_at"].startswith(earlier[:19])
+    assert device["raw_attributes"]["occurred_at"].startswith(later[:19])
 
 
 async def test_sim_11_partial_ack_mixed_batch(client, auth_headers):

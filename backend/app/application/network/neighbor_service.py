@@ -34,11 +34,12 @@ MAX_FUTURE_SKEW = timedelta(minutes=5)
 DEFAULT_STALE_FLOOR_SECONDS = 15 * 60
 
 
-def _clamp(moment: datetime) -> datetime:
-    """A collector clock far in the future must not pin `last_seen_at` ahead forever."""
+def _clamp(moment: datetime, now: datetime | None = None) -> datetime:
+    """A collector clock far in the future must not pin `last_seen_at` ahead forever.
+    `now` lets a caller that already read the clock reuse that single reading."""
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
-    return min(moment, datetime.now(UTC) + MAX_FUTURE_SKEW)
+    return min(moment, (now or datetime.now(UTC)) + MAX_FUTURE_SKEW)
 
 
 _EVIDENCE_COLUMNS = (
