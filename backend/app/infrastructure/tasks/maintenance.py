@@ -191,3 +191,12 @@ def purge_expired_staged_catalog_documents() -> int:
         )
     logger.info("catalog_document_staging_purged", deleted=deleted)
     return deleted
+
+
+@celery_app.task(name="app.infrastructure.tasks.maintenance.purge_expired_idempotency_keys")
+def purge_expired_idempotency_keys_task() -> int:
+    """DB-03 (#357): deletes expired-beyond-grace idempotency ledger rows. A strict no-op (no database session,
+    no SQL) unless `idempotency_purge_enabled` is set, which no shipped configuration does."""
+    from app.application.idempotency_purge import purge_expired_idempotency_keys
+
+    return purge_expired_idempotency_keys()

@@ -7,7 +7,7 @@ NEVER the user JWT)."""
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, TypeVar
 
 from fastapi import APIRouter, Depends, Header, Request
@@ -30,11 +30,12 @@ from app.application.collector_service import (
     run_polling_cycle,
 )
 from app.application.discovery_service import ingest_discovery
-from app.application.idempotency import IdempotencyConflict, IdempotencyStillProcessing
+from app.application.idempotency import IdempotencyClaimLost, IdempotencyConflict, IdempotencyStillProcessing
 from app.application.network.neighbor_evidence import InvalidNeighborPayload
 from app.application.network.neighbor_service import apply_scan_marker, ingest_neighbor
 from app.application.network.profile_service import build_plan
 from app.application.rbac import require_permission
+from app.core.config import get_settings
 from app.core.errors import ApiError, NotFoundError, UnauthorizedCollectorError
 from app.core.logging import get_logger
 from app.domain.integration.models import Collector, CollectorCapability
@@ -495,6 +496,8 @@ async def ingest_batch(
     # which expires `collector`; reading `collector.id` in a later iteration would then
     # lazy-load outside an awaited context and raise MissingGreenlet.
     principal = idem.collector_principal(collector_id)
+    # DB-03: collector claims live longer than user claims; the floor keeps this above the edge replay window.
+    claim_ttl = timedelta(hours=get_settings().collector_idempotency_ttl_hours)
     results: list[IngestRecordResult] = []
     for record in body.records:
         if record.record_type != "device" and not _attributes_within_bound(record.raw_attributes):
@@ -515,7 +518,7 @@ async def ingest_batch(
         try:
             outcome = await idem.get_or_claim(
                 db, principal=principal, key=f"{collector_id}:{record.dedup_key}",
-                endpoint="collector_ingest", request_hash=request_hash,
+                endpoint="collector_ingest", request_hash=request_hash, ttl=claim_ttl,
             )
         except IdempotencyConflict:
             results.append(
@@ -530,6 +533,17 @@ async def ingest_batch(
                 IngestRecordResult(
                     dedup_key=record.dedup_key, status="rejected", error_code="PROCESSING",
                     error="This record is still being processed by a concurrent request; retry shortly.",
+                )
+            )
+            continue
+        except IdempotencyClaimLost:
+            # The claim this call acquired was taken over before it could be used (a newer generation now owns
+            # the key). This request owns nothing, so there is nothing to release and nothing was written:
+            # report it retryable, exactly like a record still in flight elsewhere.
+            results.append(
+                IngestRecordResult(
+                    dedup_key=record.dedup_key, status="rejected", error_code="PROCESSING",
+                    error="This record was taken over by a concurrent request; retry shortly.",
                 )
             )
             continue
@@ -588,6 +602,7 @@ async def ingest_batch(
                     await ingest_discovery(
                         db, integration_id=record.integration_id, external_identifier=record.external_identifier,
                         raw_attributes=enriched_attrs, correlation_id=None, causation_id=body.batch_id,
+                        observed_at=record.occurred_at,
                     )
                 await idem.complete_claim(db, outcome.claim, response_status=200, response_body={"status": "accepted"})
             # The savepoint above released cleanly (no exception) -- persist it for
