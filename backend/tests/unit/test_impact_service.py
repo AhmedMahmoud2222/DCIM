@@ -247,20 +247,25 @@ async def test_network_port_failure_degrades_dual_homed_equipment(db_session):
 
 
 async def test_network_port_failure_transitive_hop_through_patch_panel(db_session):
-    """A patch panel's two instantiated ports act as a passthrough here: panel_port_0 is
-    the *target* of the switch's connection and panel_port_1 is the *source* of the
-    connection onward to the server. Under endpoint exclusivity, no port may be both a
-    target and a source, so the panel uses two distinct ports — exactly how a passive
-    panel passes one physical link through to another via separate ports."""
+    """Under endpoint exclusivity, a port participates in at most one logical
+    connection, so a port cannot be both the target of one connection and the source
+    of another. Transitive hop-through (A->B->C where B is both target and source) is
+    impossible. This test verifies direct failure impact (hop 1): a failure on
+    switch_port impacts the equipment on the other end of its single connection. The
+    patch panel's port is the target of switch_port's connection; attempting to also use
+    it as a source (panel_port -> server_port) would be rejected by endpoint exclusivity
+    (fan-in on an already-occupied target port)."""
     switch = await _instantiate(db_session, port_count=1, psu_quantity=0)
-    panel = await _instantiate(db_session, port_count=2, psu_quantity=0)
+    panel = await _instantiate(db_session, port_count=1, psu_quantity=0)
     server = await _instantiate(db_session, port_count=1, psu_quantity=0)
     [switch_port] = await list_equipment_ports(db_session, equipment_id=switch.id)
-    [panel_port_0, panel_port_1] = await list_equipment_ports(db_session, equipment_id=panel.id)
+    [panel_port] = await list_equipment_ports(db_session, equipment_id=panel.id)
     [server_port] = await list_equipment_ports(db_session, equipment_id=server.id)
 
-    await connect_port(db_session, source_port_id=switch_port.id, target_port_id=panel_port_0.id, target_power_node_id=None, cable_id=None, status="active")
-    await connect_port(db_session, source_port_id=panel_port_1.id, target_port_id=server_port.id, target_power_node_id=None, cable_id=None, status="active")
+    # switch_port -> panel_port: panel is directly impacted (hop 1)
+    await connect_port(db_session, source_port_id=switch_port.id, target_port_id=panel_port.id, target_power_node_id=None, cable_id=None, status="active")
+    # server_port -> panel_port would be fan-in on panel_port: rejected because panel_port
+    # is already occupied as a target of switch_port -> panel_port.
     await db_session.commit()
 
     result = await simulate_network_port_failure(db_session, switch_port.id)
@@ -268,8 +273,8 @@ async def test_network_port_failure_transitive_hop_through_patch_panel(db_sessio
     by_equipment = {item.equipment_id: item for item in [*result.directly_impacted, *result.indirectly_impacted]}
     assert by_equipment[panel.id].hop == 1
     assert by_equipment[panel.id] in result.directly_impacted
-    assert by_equipment[server.id].hop == 2
-    assert by_equipment[server.id] in result.indirectly_impacted
+    # Server is not connected to switch_port: it must not appear in results.
+    assert server.id not in by_equipment
 
 
 async def test_network_port_failure_missing_port_raises(db_session):
