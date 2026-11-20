@@ -73,13 +73,13 @@ ORDER BY pc1.source_port_id;
 -- ============================================================
 SELECT
     'P2-fan-in' AS severity,
-    target_port_id AS port_id,
+    pc.target_port_id AS port_id,
     count(*) AS connection_count,
-    array_agg(id ORDER BY created_at) AS connection_ids,
-    array_agg(source_port_id ORDER BY created_at) AS source_port_ids
-FROM public.port_connection
-WHERE target_port_id IS NOT NULL
-GROUP BY target_port_id
+    array_agg(pc.id ORDER BY pc.created_at) AS connection_ids,
+    array_agg(pc.source_port_id ORDER BY pc.created_at) AS source_port_ids
+FROM public.port_connection AS pc
+WHERE pc.target_port_id IS NOT NULL
+GROUP BY pc.target_port_id
 HAVING count(*) > 1
 ORDER BY count(*) DESC;
 
@@ -108,8 +108,8 @@ SELECT
     pc_port.id AS port_to_port_connection,
     pc_power.id AS power_node_connection,
     pc_power.target_power_node_id AS power_node_id
-FROM port_connection AS pc_port
-JOIN port_connection AS pc_power ON pc_port.target_port_id = pc_power.source_port_id
+FROM public.port_connection AS pc_port
+JOIN public.port_connection AS pc_power ON pc_port.target_port_id = pc_power.source_port_id
 WHERE pc_port.target_port_id IS NOT NULL
   AND pc_power.target_power_node_id IS NOT NULL
   AND pc_port.source_port_id != pc_power.source_port_id
@@ -151,7 +151,7 @@ FROM (
     FROM (SELECT source_port_id AS port_id, count(*) AS cnt FROM public.port_connection GROUP BY source_port_id) AS s
     FULL OUTER JOIN (SELECT target_port_id AS port_id, count(*) AS cnt FROM public.port_connection WHERE target_port_id IS NOT NULL GROUP BY target_port_id) AS t
     ON s.port_id = t.port_id
-) p
+) AS p
 WHERE p.source_count > 0 AND p.target_count > 0
 ORDER BY p.total_connections DESC;
 

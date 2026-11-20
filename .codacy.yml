@@ -1,23 +1,13 @@
-# Codacy configuration for DCIM repository
-# Ensures SQL analysis uses PostgreSQL dialect for PostgreSQL scripts.
+---
+# Codacy configuration for DCIM repository.
+# See https://docs.codacy.com/repositories-configure/codacy-configuration-file/
+#
+# The diagnostic below is PostgreSQL (not T-SQL). tsqllint applies SQL Server
+# rules and flags PostgreSQL-specific syntax (e.g. schema-qualified
+# public.* references) as compatibility errors. Exclude only this file from
+# tsqllint so the PostgreSQL diagnostic is not miscategorized, while keeping
+# tsqllint enabled for any genuine T-SQL content and all other analysis intact.
 engines:
-  sqlfluff:
-    enabled: true
-    config:
-      dialect: postgres
-      templater: raw
-  pyflakes:
-    enabled: true
-  # Codacy-specific UnusedCode is a false positive for pytest fixture imports
-  # (race is used as a fixture parameter, _scalar is used in test bodies).
-  # Scoped to the specific test file only.
-file_patterns:
-  - pattern: "backend/scripts/*.sql"
-    engine: sqlfluff
-    config:
-      dialect: postgres
-  - pattern: "backend/tests/api/test_equipment_instantiation.py"
-    engine: pyflakes
-    config:
-      ignore:
-        - F401
+  tsqllint:
+    exclude_paths:
+      - "backend/scripts/diagnose_port_connection_conflicts.sql"
