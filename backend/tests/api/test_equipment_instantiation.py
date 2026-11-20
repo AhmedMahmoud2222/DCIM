@@ -14,6 +14,11 @@ from tests.api._network_inventory import make_device
 from tests.api._phase2_helpers import create_room
 from tests.conftest import _scalar, race  # noqa: F401
 
+# Explicit references for static analyzers (Codacy, pyflakes) that do not
+# recognize pytest fixture parameters or indirect function calls as usage.
+_race = race
+_scalar = _scalar
+
 
 async def _admin(auth_headers) -> dict:
     return await auth_headers("Administrator")
