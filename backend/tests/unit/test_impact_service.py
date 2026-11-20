@@ -247,20 +247,20 @@ async def test_network_port_failure_degrades_dual_homed_equipment(db_session):
 
 
 async def test_network_port_failure_transitive_hop_through_patch_panel(db_session):
-    """A patch panel's single instantiated port acts as a passthrough here: it is the
-    *target* of the switch's connection and the *source* of the connection onward to the
-    server — nothing in `PortConnection`'s schema forbids a port from being both (only
-    `source_port_id` itself is unique per row), which is exactly how a passive panel
-    passes one physical link through to another."""
+    """A patch panel's two instantiated ports act as a passthrough here: panel_port_0 is
+    the *target* of the switch's connection and panel_port_1 is the *source* of the
+    connection onward to the server. Under endpoint exclusivity, no port may be both a
+    target and a source, so the panel uses two distinct ports — exactly how a passive
+    panel passes one physical link through to another via separate ports."""
     switch = await _instantiate(db_session, port_count=1, psu_quantity=0)
-    panel = await _instantiate(db_session, port_count=1, psu_quantity=0)
+    panel = await _instantiate(db_session, port_count=2, psu_quantity=0)
     server = await _instantiate(db_session, port_count=1, psu_quantity=0)
     [switch_port] = await list_equipment_ports(db_session, equipment_id=switch.id)
-    [panel_port] = await list_equipment_ports(db_session, equipment_id=panel.id)
+    [panel_port_0, panel_port_1] = await list_equipment_ports(db_session, equipment_id=panel.id)
     [server_port] = await list_equipment_ports(db_session, equipment_id=server.id)
 
-    await connect_port(db_session, source_port_id=switch_port.id, target_port_id=panel_port.id, target_power_node_id=None, cable_id=None, status="active")
-    await connect_port(db_session, source_port_id=panel_port.id, target_port_id=server_port.id, target_power_node_id=None, cable_id=None, status="active")
+    await connect_port(db_session, source_port_id=switch_port.id, target_port_id=panel_port_0.id, target_power_node_id=None, cable_id=None, status="active")
+    await connect_port(db_session, source_port_id=panel_port_1.id, target_port_id=server_port.id, target_power_node_id=None, cable_id=None, status="active")
     await db_session.commit()
 
     result = await simulate_network_port_failure(db_session, switch_port.id)
