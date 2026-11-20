@@ -13,7 +13,15 @@ An `Idempotency-Key` identifies one logical write **for a bounded window**, not 
 | `POST /managed-assets`, `/equipment`, `/equipment/instantiate`, `/racks`, `/power/pdus/instantiate` | **24 hours** per claim generation | `user:<id>` |
 | `POST /collectors/{id}/ingest` (per record `dedup_key`) | `collector_idempotency_ttl_hours`, default **72 h**, minimum **36 h** | `collector:<id>` |
 
-Within the window nothing changes: the same key and body replays the original response; the same key with a different body is `422 Idempotency Key Reused` (collector: `IDEMPOTENCY_CONFLICT`); a request that races a live owner waits up to five seconds, then answers `503 Request Still Processing`.
+Within the window nothing changes: the same key and body replays the original response; the same key with a different body is rejected; a request that races a live owner waits up to five seconds before giving up. How each outcome is reported differs between the user endpoints and collector ingestion:
+
+| Outcome | The five user endpoints | `POST /collectors/{id}/ingest` (per record) |
+|---|---|---|
+| Same key, different body, in window | `422 Idempotency Key Reused` | `status="rejected"`, `error_code="IDEMPOTENCY_CONFLICT"` |
+| Owner still processing after the 5 s window (`IdempotencyStillProcessing`) | `503 Request Still Processing` | `status="rejected"`, `error_code="PROCESSING"` (retryable; HTTP 200 for the batch) |
+| Claim taken over before it could be used (`IdempotencyClaimLost` raised by `get_or_claim`) | `503 Request Superseded`, `Retry-After: 1`, nothing written | `status="rejected"`, `error_code="PROCESSING"` (retryable); no claim is owned, so nothing is released and the new owner's claim is untouched |
+| Claim lost at completion (`IdempotencyClaimLost` from `complete_claim`) | `503 Request Superseded`; transaction, domain write included, rolled back | isolated inside the record's savepoint: `status="rejected"`, `error_code="INTERNAL_PROCESSING_ERROR"` (retryable, siblings unaffected) |
+| Replay of a completed record in window | original response | `status="duplicate"` |
 
 **After the window** (`expires_at <= now`, inclusive) the key is treated as unused and the request **executes again**, evaluated *before* the request-hash comparison:
 
@@ -30,7 +38,7 @@ A claim generation is renewed (`expires_at` reset) when it starts: new claim, st
 ## Mechanics
 
 * **Replacement** is one compare-and-swap `UPDATE ... WHERE id = (SELECT id ... AND claim_generation = :seen AND expires_at <= :now FOR UPDATE SKIP LOCKED)`. It bumps `claim_generation` exactly once, clears the stored response, records the new hash and expiry, and commits immediately. A locked or changed row yields zero rows: it never waits and never rolls back (a session rollback would expire the caller's ORM objects, e.g. `ctx.user`). The new claim is reloaded with `populate_existing=True`.
-* **Fencing** is unchanged: `complete_claim` / `release_claim` act only on `status='processing'` and the caller's generation, so a stale owner gets `IdempotencyClaimLost` (`503 Request Superseded`) and its transaction, domain write included, is rolled back.
+* **Fencing** is unchanged: `complete_claim` / `release_claim` act only on `status='processing'` and the caller's generation, so a stale owner gets `IdempotencyClaimLost` and its transaction, domain write included, is rolled back (see the status table above for how each caller reports it). The claim statements return the generation they issued, and the reload verifies exactly that generation and `status='processing'`: a caller whose claim was reclaimed, replaced, completed or deleted between the statement's commit and the reload gets `IdempotencyClaimLost` instead of adopting the newer owner's fencing token.
 * **Two clocks.** `_now()` (injectable) decides expiry and staleness; the polling deadline is `time.monotonic()` taken at function entry, so a blocked first INSERT shares the five-second budget and a frozen expiry clock cannot hang the loop. Every non-returning loop iteration checks the deadline before sleeping.
 * **No hard response-time SLA.** The five-second bound covers the application's polling only. A database lock wait or connection-pool wait inside a single statement is outside application control (DB-12).
 * **Principal guard.** `get_or_claim` accepts only `user:` and `collector:` principals; `legacy:unscoped` and malformed values raise `ValueError` before any database access. Legacy rows stay inert and become eligible for generic purge once expired.

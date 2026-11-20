@@ -67,7 +67,7 @@ async def tag(sessions):
     await cleanup.commit()
 
 
-async def _seed(session, key, *, expires_ago: timedelta, status="completed", generation=1):
+async def _seed(session, key, *, expires_ago: timedelta, status="completed", generation=1, principal=PRINCIPAL):
     await session.execute(
         text(
             "INSERT INTO idempotency_key (id, principal, key, endpoint, request_hash, status, claim_generation,"
@@ -75,9 +75,26 @@ async def _seed(session, key, *, expires_ago: timedelta, status="completed", gen
             " (gen_random_uuid(), :p, :k, :e, 'h', :s, :g, NULL, NULL, now() - make_interval(secs => :ago),"
             " now(), now())"
         ),
-        {"p": PRINCIPAL, "k": key, "e": ENDPOINT, "s": status, "g": generation, "ago": expires_ago.total_seconds()},
+        {"p": principal, "k": key, "e": ENDPOINT, "s": status, "g": generation, "ago": expires_ago.total_seconds()},
     )
     await session.commit()
+
+
+async def _seed_at(session, key, *, expires_at, status="completed"):
+    """Seed a row with an absolute `expires_at` (for exact boundary and clock-offset tests)."""
+    await session.execute(
+        text(
+            "INSERT INTO idempotency_key (id, principal, key, endpoint, request_hash, status, claim_generation,"
+            " response_status, response_body, expires_at, created_at, updated_at) VALUES"
+            " (gen_random_uuid(), :p, :k, :e, 'h', :s, 1, NULL, NULL, :x, now(), now())"
+        ),
+        {"p": PRINCIPAL, "k": key, "e": ENDPOINT, "s": status, "x": expires_at},
+    )
+    await session.commit()
+
+
+async def _db_now(session) -> datetime:
+    return (await session.execute(text("SELECT now()"))).scalar_one()
 
 
 async def _keys(session, prefix) -> set[str]:
@@ -102,17 +119,29 @@ async def test_t37_disabled_purge_opens_no_connection_and_issues_no_sql(sessions
     for i in range(3):
         await _seed(seeder, f"{tag}-{i}", expires_ago=10 * HOUR)
 
-    statements: list[str] = []
-    connects: list[int] = []
-    event.listen(sync_engine_, "before_cursor_execute", lambda *a, **k: statements.append(a[2]))
-    event.listen(sync_engine_, "engine_connect", lambda *a, **k: connects.append(1))
-    event.listen(sync_engine_, "checkout", lambda *a, **k: connects.append(1))
-
-    assert purge.purge_expired_idempotency_keys(settings=Settings(), engine=sync_engine_) == 0
-    # The Celery task entry point with the default configuration behaves identically.
+    from app.db.sync_session import sync_engine as task_engine  # the engine the Celery task would really use
     from app.infrastructure.tasks.maintenance import purge_expired_idempotency_keys_task
 
-    assert purge_expired_idempotency_keys_task() == 0
+    statements: list[str] = []
+    connects: list[int] = []
+    watched = (sync_engine_, task_engine)
+    handlers = {
+        "before_cursor_execute": lambda *a, **k: statements.append(a[2]),
+        "engine_connect": lambda *a, **k: connects.append(1),
+        "checkout": lambda *a, **k: connects.append(1),
+        "connect": lambda *a, **k: connects.append(1),
+    }
+    for engine in watched:
+        for name, handler in handlers.items():
+            event.listen(engine, name, handler)
+    try:
+        assert purge.purge_expired_idempotency_keys(settings=Settings(), engine=sync_engine_) == 0
+        # The Celery task entry point with the default configuration behaves identically, on ITS engine.
+        assert purge_expired_idempotency_keys_task() == 0
+    finally:
+        for engine in watched:
+            for name, handler in handlers.items():
+                event.remove(engine, name, handler)
     assert statements == [] and connects == []
     assert len(await _keys(seeder, tag)) == 3  # nothing deleted
 
@@ -214,6 +243,34 @@ async def test_t44_pause_is_applied_between_batches_and_the_time_budget_stops_th
     assert pauses == [0.04, 0.04]  # between batch 1->2 and 2->3; the final partial batch needs no pause
 
 
+async def test_f5_the_pause_never_pushes_a_new_batch_past_the_runtime_budget(sessions, sync_engine_, tag):
+    s = sessions()
+    for i in range(12):
+        await _seed(s, f"{tag}-{i:02d}", expires_ago=5 * HOUR)
+    pauses: list[float] = []
+    ticks = iter([0.0, 0.7])  # after batch 1: elapsed 0.7 s; 0.7 + 0.4 s pause >= 1.0 s budget
+    deleted = purge.purge_expired_idempotency_keys(
+        settings=_settings(idempotency_purge_batch_size=5, idempotency_purge_pause_ms=400,
+                           idempotency_purge_max_runtime_seconds=1.0),
+        engine=sync_engine_, monotonic=lambda: next(ticks), sleep=pauses.append,
+    )
+    assert deleted == 5 and pauses == []  # no sleep into the deadline and no extra batch after it
+
+
+async def test_f5_a_pause_that_fits_the_budget_is_taken_and_the_next_batch_runs(sessions, sync_engine_, tag):
+    s = sessions()
+    for i in range(12):
+        await _seed(s, f"{tag}-{i:02d}", expires_ago=5 * HOUR)
+    pauses: list[float] = []
+    ticks = iter([0.0, 0.2, 0.55])  # batch 1: 0.2 + 0.4 < 1.0 -> pause; batch 2: 0.55 + 0.4 < 1.0 -> pause; batch 3 partial
+    deleted = purge.purge_expired_idempotency_keys(
+        settings=_settings(idempotency_purge_batch_size=5, idempotency_purge_pause_ms=400,
+                           idempotency_purge_max_runtime_seconds=1.0),
+        engine=sync_engine_, monotonic=lambda: next(ticks), sleep=pauses.append,
+    )
+    assert deleted == 12 and pauses == [0.4, 0.4]
+
+
 # --- T43: statement timeout ----------------------------------------------------------------------------------------------
 
 
@@ -274,21 +331,39 @@ def test_t45_valid_boundaries_and_defaults():
 async def test_t16_purge_first_replacer_skips_the_locked_row_then_inserts_fresh_after_commit(
     sessions, sync_engine_, tag, monkeypatch
 ):
+    """The purge has locked the eligible row (the SELECT ... FOR UPDATE SKIP LOCKED half of its CTE) but has not
+    deleted it yet. The contender's INSERT ... ON CONFLICT sees the live row, finds it expired, and its
+    replacement CAS must SKIP the locked row (zero rows, no wait) and fall back to polling. Only after the purge
+    deletes and commits does the contender's re-read find nothing and insert a fresh generation-1 row."""
     monkeypatch.setattr(idem, "_POLL_MAX_WAIT_SECONDS", 5.0)
     key = f"{tag}-race"
     s = sessions()
     await _seed(s, key, expires_ago=5 * HOUR, generation=3)
 
     purge_conn = sync_engine_.connect()
-    purge_txn = purge_conn.begin()  # an in-flight purge statement: row deleted and locked, not committed
+    purge_txn = purge_conn.begin()
     cutoff = datetime.now(UTC) - HOUR
-    assert purge_conn.execute(purge.PURGE_BATCH_SQL, {"cutoff": cutoff, "batch": 500}).rowcount >= 1
+    locked = purge_conn.execute(
+        text("SELECT key FROM idempotency_key WHERE expires_at <= :c AND key = :k FOR UPDATE SKIP LOCKED"),
+        {"c": cutoff, "k": key},
+    ).all()
+    assert [row[0] for row in locked] == [key]  # the purge now holds the row lock, row not yet deleted
 
+    polling = asyncio.Event()
+    real_sleep = asyncio.sleep
+
+    async def observed_sleep(seconds):
+        polling.set()
+        await real_sleep(seconds)
+
+    monkeypatch.setattr(idem.asyncio, "sleep", observed_sleep)
     contender = asyncio.create_task(
         idem.get_or_claim(sessions(), principal=PRINCIPAL, key=key, endpoint=ENDPOINT, request_hash="h")
     )
-    await asyncio.sleep(0.4)  # the contender's INSERT/replace cannot proceed while the purge holds the row
+    await asyncio.wait_for(polling.wait(), timeout=5)  # replacement was skipped (no wait) and the loop is polling
     assert not contender.done()
+
+    assert purge_conn.execute(purge.PURGE_BATCH_SQL, {"cutoff": cutoff, "batch": 500}).rowcount >= 1
     purge_txn.commit()
     purge_conn.close()
     outcome = await asyncio.wait_for(contender, timeout=5)
@@ -388,3 +463,95 @@ async def test_completion_racing_a_replacement_never_double_completes(sessions, 
     await new_owner.commit()
     row = (await s.execute(text("SELECT status, response_body FROM idempotency_key WHERE key = :k"), {"k": key})).one()
     assert row.status == "completed" and row.response_body == {"owner": "new"}
+
+
+# --- T13 (purge half): legacy:unscoped rows ------------------------------------------------------------------------------
+
+
+LEGACY = "legacy:unscoped"
+
+
+async def test_t13_legacy_unscoped_rows_follow_the_generic_purge_boundary_and_touch_nobody_else(sessions, sync_engine_, tag):
+    s = sessions()
+    await _seed(s, f"{tag}-legacy-live", expires_ago=-HOUR, principal=LEGACY)  # not yet expired: retained
+    await _seed(s, f"{tag}-legacy-grace", expires_ago=timedelta(minutes=30), principal=LEGACY)  # inside grace: retained
+    await _seed(s, f"{tag}-legacy-old", expires_ago=2 * HOUR, principal=LEGACY)  # beyond grace: generic purge
+    await _seed(s, f"{tag}-user-live", expires_ago=-HOUR)  # an unrelated principal's live row
+    await _seed(s, f"{tag}-user-processing", expires_ago=-HOUR, status="processing")
+
+    purge.purge_expired_idempotency_keys(settings=_settings(), engine=sync_engine_)
+    assert await _keys(s, tag) == {
+        f"{tag}-legacy-live", f"{tag}-legacy-grace", f"{tag}-user-live", f"{tag}-user-processing"
+    }
+
+
+async def test_t13_an_active_claim_never_adopts_a_legacy_row_before_or_after_purge(sessions, sync_engine_, tag):
+    key = f"{tag}-shared-key"
+    s = sessions()
+    await _seed(s, key, expires_ago=2 * HOUR, principal=LEGACY)
+    outcome = await idem.get_or_claim(sessions(), principal=PRINCIPAL, key=key, endpoint=ENDPOINT, request_hash="h")
+    assert outcome.claim is not None and outcome.claim.principal == PRINCIPAL and outcome.claim.claim_generation == 1
+    purge.purge_expired_idempotency_keys(settings=_settings(), engine=sync_engine_)
+    remaining = (await s.execute(text("SELECT principal FROM idempotency_key WHERE key = :k"), {"k": key})).scalars().all()
+    assert remaining == [PRINCIPAL]  # the legacy row went through generic purge; the live claim is untouched
+
+
+# --- T34: clock skew and grace safety --------------------------------------------------------------------------------------
+
+
+async def test_t34_the_purge_boundary_is_exactly_expires_at_le_now_minus_grace(sessions, sync_engine_, tag):
+    s = sessions()
+    now = await _db_now(s)
+    grace = timedelta(seconds=3600)
+    await _seed_at(s, f"{tag}-at-boundary", expires_at=now - grace)  # == cutoff: eligible (inclusive)
+    await _seed_at(s, f"{tag}-after-boundary", expires_at=now - grace + timedelta(microseconds=1))  # protected
+    await _seed_at(s, f"{tag}-before-boundary", expires_at=now - grace - timedelta(microseconds=1))  # eligible
+    purge.purge_expired_idempotency_keys(settings=_settings(), engine=sync_engine_, now=lambda: now)
+    assert await _keys(s, tag) == {f"{tag}-after-boundary"}
+
+
+async def test_t34_a_purge_clock_ahead_by_less_than_the_remaining_grace_selects_nothing_inside_the_grace(
+    sessions, sync_engine_, tag
+):
+    s = sessions()
+    now = await _db_now(s)
+    await _seed_at(s, f"{tag}-30m", expires_at=now - timedelta(minutes=30))  # expired 30 min ago, grace is 60 min
+    # Skew +20 min: the row looks 50 min past expiry, still inside the 60 min grace -> protected.
+    purge.purge_expired_idempotency_keys(
+        settings=_settings(), engine=sync_engine_, now=lambda: now + timedelta(minutes=20)
+    )
+    assert await _keys(s, tag) == {f"{tag}-30m"}
+    # Skew +31 min exceeds the remaining grace margin (30 min + 31 min > 60 min): eligible. This documents the
+    # contract: the grace period must exceed the clock skew a deployment tolerates (NTP requirement).
+    purge.purge_expired_idempotency_keys(
+        settings=_settings(), engine=sync_engine_, now=lambda: now + timedelta(minutes=31)
+    )
+    assert await _keys(s, tag) == set()
+
+
+async def test_t34_a_live_processing_generation_is_never_selected_under_realistic_skew(sessions, sync_engine_, tag):
+    s = sessions()
+    now = await _db_now(s)
+    await _seed_at(s, f"{tag}-live-processing", expires_at=now + timedelta(hours=24), status="processing")
+    await _seed_at(s, f"{tag}-live-completed", expires_at=now + timedelta(hours=24))
+    for skew in (timedelta(minutes=5), timedelta(hours=1), timedelta(hours=24), timedelta(hours=24, minutes=59)):
+        purge.purge_expired_idempotency_keys(settings=_settings(), engine=sync_engine_, now=lambda skew=skew: now + skew)
+        assert len(await _keys(s, tag)) == 2, f"a live generation was selected at skew {skew}"
+    # Only an absurd skew (expiry + the full grace) makes a 24 h generation eligible.
+    purge.purge_expired_idempotency_keys(
+        settings=_settings(), engine=sync_engine_, now=lambda: now + timedelta(hours=25, seconds=1)
+    )
+    assert await _keys(s, tag) == set()
+
+
+async def test_t34_a_claim_made_on_a_skewed_app_clock_is_not_purgeable_by_a_correct_clock(
+    sessions, sync_engine_, tag, monkeypatch
+):
+    key = f"{tag}-skewed-claim"
+    s = sessions()
+    real_now = await _db_now(s)
+    monkeypatch.setattr(idem, "_now", lambda: real_now - timedelta(minutes=10))  # this node's clock runs 10 min slow
+    outcome = await idem.get_or_claim(sessions(), principal=PRINCIPAL, key=key, endpoint=ENDPOINT, request_hash="h")
+    assert outcome.claim.claim_generation == 1
+    purge.purge_expired_idempotency_keys(settings=_settings(), engine=sync_engine_, now=lambda: real_now)
+    assert await _keys(s, tag) == {key}

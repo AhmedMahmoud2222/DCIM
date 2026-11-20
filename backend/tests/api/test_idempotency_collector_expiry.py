@@ -38,7 +38,8 @@ def _device(integration_id, external_identifier, occurred_at, **raw):
 
 async def _device_state(db_session, external_identifier):
     return dict((await db_session.execute(text(
-        "SELECT last_seen_at, raw_attributes, status FROM discovered_device WHERE external_identifier = :e"),
+        "SELECT last_seen_at, raw_attributes, status, profile_match FROM discovered_device "
+        "WHERE external_identifier = :e"),
         {"e": external_identifier})).mappings().one())
 
 
@@ -221,8 +222,11 @@ def test_t36_no_route_deletes_or_retags_assets_equipment_racks_or_pdus():
     ]
     assert deleting == [], f"asset-deleting routes need an explicit idempotency re-review: {deleting}"
 
+    app_root = pathlib.Path(__file__).resolve().parents[2] / "app"  # anchored to this file, not the working directory
+    sources = sorted(app_root.rglob("*.py"))
+    assert len(sources) > 100, f"expected to scan the application tree, found {len(sources)} files under {app_root}"
     offenders: list[str] = []
-    for path in pathlib.Path("app").rglob("*.py"):
+    for path in sources:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             targets = []

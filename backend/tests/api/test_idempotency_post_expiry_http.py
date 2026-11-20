@@ -58,11 +58,29 @@ async def _expire(db_session, key: str) -> None:
     await db_session.commit()
 
 
-async def _counts(db_session, tag: str) -> tuple[int, int, int]:
+# Every table an instantiate/create call can write into. A rolled-back duplicate must leave all of them unchanged.
+_SUBTYPE_COUNTS = {
+    name: text(stmt)
+    for name, stmt in {
+        "equipment": "SELECT count(*) FROM equipment",
+        "equipment_port": "SELECT count(*) FROM equipment_port",
+        "equipment_power_inlet": "SELECT count(*) FROM equipment_power_inlet",
+        "equipment_placement": "SELECT count(*) FROM equipment_placement",
+        "rack": "SELECT count(*) FROM rack",
+        "rack_placement": "SELECT count(*) FROM rack_placement",
+        "pdu": "SELECT count(*) FROM pdu",
+        "pdu_outlet": "SELECT count(*) FROM pdu_outlet",
+        "power_node": "SELECT count(*) FROM power_node",
+    }.items()
+}
+
+
+async def _counts(db_session, tag: str) -> tuple:
     assets = (await db_session.execute(select(func.count()).select_from(ManagedAsset).where(ManagedAsset.asset_tag == tag))).scalar_one()
     audits = (await db_session.execute(select(func.count()).select_from(AuditLog))).scalar_one()
     outbox = (await db_session.execute(select(func.count()).select_from(OutboxEvent))).scalar_one()
-    return assets, audits, outbox
+    subtypes = tuple([(await db_session.execute(stmt)).scalar_one() for stmt in _SUBTYPE_COUNTS.values()])
+    return assets, audits, outbox, subtypes
 
 
 async def _ledger(db_session, key: str):

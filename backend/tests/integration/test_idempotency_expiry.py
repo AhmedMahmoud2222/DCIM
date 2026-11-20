@@ -48,11 +48,18 @@ def short_poll_window(monkeypatch):
     monkeypatch.setattr(idem, "_POLL_MAX_WAIT_SECONDS", 0.3)
 
 
-async def _seed(
-    session, key, *, status="completed", request_hash="h", expires_in=timedelta(hours=1), generation=1,
-    principal=PRINCIPAL, updated_ago=timedelta(0), response=True,
-):
-    """Insert a ledger row directly. `expires_in` may be negative (already expired)."""
+_SEED_DEFAULTS = {
+    "status": "completed", "request_hash": "h", "expires_in": timedelta(hours=1), "generation": 1,
+    "principal": PRINCIPAL, "updated_ago": timedelta(0), "response": True,
+}
+
+
+async def _seed(session, key, **overrides):
+    """Insert a ledger row directly. `expires_in` may be negative (already expired). Accepted overrides:
+    status, request_hash, expires_in, generation, principal, updated_ago, response."""
+    unknown = set(overrides) - set(_SEED_DEFAULTS)
+    assert not unknown, f"unknown _seed overrides: {unknown}"
+    row = _SEED_DEFAULTS | overrides
     await session.execute(
         text(
             "INSERT INTO idempotency_key (id, principal, key, endpoint, request_hash, status, claim_generation,"
@@ -61,9 +68,10 @@ async def _seed(
             " now() + make_interval(secs => :exp), now(), now() - make_interval(secs => :ago))"
         ),
         {
-            "p": principal, "k": key, "e": ENDPOINT, "h": request_hash, "s": status, "g": generation,
-            "rs": 201 if response else None, "rb": '{"seeded": true}' if response else None,
-            "exp": expires_in.total_seconds(), "ago": updated_ago.total_seconds(),
+            "p": row["principal"], "k": key, "e": ENDPOINT, "h": row["request_hash"], "s": row["status"],
+            "g": row["generation"], "rs": 201 if row["response"] else None,
+            "rb": '{"seeded": true}' if row["response"] else None,
+            "exp": row["expires_in"].total_seconds(), "ago": row["updated_ago"].total_seconds(),
         },
     )
     await session.commit()
@@ -236,7 +244,7 @@ async def test_t10_replacement_skips_a_locked_row_immediately_instead_of_waiting
     replaced = await idem._try_replace_expired(  # noqa: SLF001
         contender, _Seen(), request_hash="h", now=datetime.now(UTC), ttl=timedelta(hours=24)
     )
-    assert replaced == row_id
+    assert replaced.id == row_id
 
 
 async def test_a_changed_generation_is_never_replaced_by_a_stale_observation(sessions):
@@ -410,7 +418,7 @@ async def test_t38_regression_guard_a_plain_get_would_return_the_stale_generatio
     assert (await idem._try_replace_expired(  # noqa: SLF001
         other, type("R", (), {"id": row_id, "claim_generation": 4})(), request_hash="h",
         now=datetime.now(UTC), ttl=timedelta(hours=24),
-    )) == row_id
+    )) == idem.Acquired(row_id, 5)
     stale = await s.get(idem.IdempotencyKey, row_id)  # no populate_existing
     assert stale is pinned and stale.claim_generation == 4  # stale: the database says 5
     fresh = await s.get(idem.IdempotencyKey, row_id, populate_existing=True)
@@ -509,9 +517,11 @@ async def test_t41_the_deadline_is_taken_at_entry_so_a_slow_first_attempt_shrink
     await _seed(sessions(), key, status="processing", response=False)  # live, same hash: nothing to do but wait
     real_try_claim = idem._try_claim  # noqa: SLF001
 
-    async def slow_first_insert(*a, **k):
+    async def slow_first_insert(db, *, principal, key, endpoint, request_hash, ttl):
         fake_time.now += 4.0  # e.g. the INSERT waited on a lock holder for 4 s
-        return await real_try_claim(*a, **k)
+        return await real_try_claim(
+            db, principal=principal, key=key, endpoint=endpoint, request_hash=request_hash, ttl=ttl
+        )
 
     monkeypatch.setattr(idem, "_try_claim", slow_first_insert)
     with pytest.raises(idem.IdempotencyStillProcessing):
@@ -551,3 +561,70 @@ async def test_t50_reserved_and_malformed_principals_are_rejected_before_any_dat
 @pytest.mark.parametrize("principal", ["user:A", "user:" + str(uuid.uuid4()), "collector:" + str(uuid.uuid4())])
 async def test_generated_principal_shapes_are_accepted(sessions, principal):
     assert (await _claim(sessions(), _key(), principal=principal)).claim is not None
+
+
+# --- T10 (full flow): a waiting get_or_claim re-evaluates a concurrently committed update under READ COMMITTED ----------
+
+
+async def _blocked_replace_then_holder_commits(sessions, monkeypatch, *, caller_hash, holder_update_sql):
+    """A holds FOR UPDATE on an expired row. B runs the complete get_or_claim: its replacement attempt skips the
+    locked row WITHOUT waiting and B starts polling. Only then does A commit an update of the row; B must observe
+    the newly committed state on its next read. Synchronised on B's first sleep, not on wall-clock timing."""
+    monkeypatch.setattr(idem, "_POLL_MAX_WAIT_SECONDS", 5.0)
+    key = _key()
+    holder, caller = sessions(), sessions()
+    await _seed(holder, key, expires_in=timedelta(seconds=-5), generation=1)
+    row_id = (await _row(holder, key)).id
+    await holder.execute(text("SELECT id FROM idempotency_key WHERE id = :i FOR UPDATE"), {"i": row_id})
+
+    polling = asyncio.Event()
+    real_sleep = asyncio.sleep
+
+    async def observed_sleep(seconds):
+        polling.set()
+        await real_sleep(seconds)
+
+    monkeypatch.setattr(idem.asyncio, "sleep", observed_sleep)
+    task = asyncio.create_task(_claim(caller, key, request_hash=caller_hash))
+    await asyncio.wait_for(polling.wait(), timeout=5)  # B skipped the locked row and is polling: it did not wait
+    assert not task.done()
+    assert (await _row(sessions(), key)).claim_generation == 1  # A has not committed anything yet
+
+    await holder.execute(text(holder_update_sql), {"i": row_id})  # A renews/completes the row
+    await holder.commit()
+    return task
+
+
+async def test_t10_full_flow_waiting_caller_replays_the_holders_committed_result(sessions, monkeypatch):
+    task = await _blocked_replace_then_holder_commits(
+        sessions, monkeypatch, caller_hash="h",
+        holder_update_sql=(
+            "UPDATE idempotency_key SET expires_at = now() + interval '1 hour', status = 'completed', "
+            "claim_generation = claim_generation + 1, response_status = 201, "
+            "response_body = CAST('{\"holder\": true}' AS jsonb) WHERE id = :i"
+        ),
+    )
+    outcome = await asyncio.wait_for(task, timeout=5)
+    assert outcome.claim is None and outcome.cached is not None  # replay of A's result, no second execution
+    assert outcome.cached.response_body == {"holder": True} and outcome.cached.claim_generation == 2
+
+
+async def test_t10_full_flow_waiting_caller_with_a_different_hash_conflicts(sessions, monkeypatch):
+    task = await _blocked_replace_then_holder_commits(
+        sessions, monkeypatch, caller_hash="different-body",
+        holder_update_sql=(
+            "UPDATE idempotency_key SET expires_at = now() + interval '1 hour', status = 'completed', "
+            "claim_generation = claim_generation + 1, response_status = 201, "
+            "response_body = CAST('{}' AS jsonb) WHERE id = :i"
+        ),
+    )
+    with pytest.raises(idem.IdempotencyConflict):
+        await asyncio.wait_for(task, timeout=5)
+
+
+async def test_t10_full_flow_waiting_caller_replaces_when_the_holder_leaves_the_row_expired(sessions, monkeypatch):
+    task = await _blocked_replace_then_holder_commits(
+        sessions, monkeypatch, caller_hash="h", holder_update_sql="UPDATE idempotency_key SET request_hash = request_hash WHERE id = :i",
+    )
+    outcome = await asyncio.wait_for(task, timeout=5)
+    assert outcome.claim is not None and outcome.claim.claim_generation == 2  # lock released: B replaces normally

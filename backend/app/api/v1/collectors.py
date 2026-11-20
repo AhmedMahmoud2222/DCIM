@@ -30,7 +30,7 @@ from app.application.collector_service import (
     run_polling_cycle,
 )
 from app.application.discovery_service import ingest_discovery
-from app.application.idempotency import IdempotencyConflict, IdempotencyStillProcessing
+from app.application.idempotency import IdempotencyClaimLost, IdempotencyConflict, IdempotencyStillProcessing
 from app.application.network.neighbor_evidence import InvalidNeighborPayload
 from app.application.network.neighbor_service import apply_scan_marker, ingest_neighbor
 from app.application.network.profile_service import build_plan
@@ -533,6 +533,17 @@ async def ingest_batch(
                 IngestRecordResult(
                     dedup_key=record.dedup_key, status="rejected", error_code="PROCESSING",
                     error="This record is still being processed by a concurrent request; retry shortly.",
+                )
+            )
+            continue
+        except IdempotencyClaimLost:
+            # The claim this call acquired was taken over before it could be used (a newer generation now owns
+            # the key). This request owns nothing, so there is nothing to release and nothing was written:
+            # report it retryable, exactly like a record still in flight elsewhere.
+            results.append(
+                IngestRecordResult(
+                    dedup_key=record.dedup_key, status="rejected", error_code="PROCESSING",
+                    error="This record was taken over by a concurrent request; retry shortly.",
                 )
             )
             continue

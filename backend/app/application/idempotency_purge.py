@@ -91,10 +91,13 @@ def purge_expired_idempotency_keys(
         deleted_total += deleted
         if deleted < batch_size:
             break  # drained (or the rest is locked: the next run continues)
-        if monotonic() - started >= policy.idempotency_purge_max_runtime_seconds:
-            break  # time budget exhausted; resume next run
-        if policy.idempotency_purge_pause_ms:
-            sleep(policy.idempotency_purge_pause_ms / 1000)
+        # The pause counts against the budget: never sleep into, or past, the deadline and then start another
+        # batch. Elapsed time is read once so the check and the pause use the same instant.
+        pause_seconds = policy.idempotency_purge_pause_ms / 1000
+        if (monotonic() - started) + pause_seconds >= policy.idempotency_purge_max_runtime_seconds:
+            break  # time budget exhausted (or would be during the pause); resume next run
+        if pause_seconds:
+            sleep(pause_seconds)
 
     if deleted_total:
         logger.info("idempotency_purge_completed", deleted=deleted_total)
