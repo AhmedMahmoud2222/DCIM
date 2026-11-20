@@ -263,3 +263,20 @@ async def test_central_poll_uses_the_driver_observation_time_so_a_slow_poll_cann
     state = await _device_state(db_session, "127.0.0.1")
     assert state["raw_attributes"] == {"protocol": "icmp", "target_host": "127.0.0.1"}
     assert state["last_seen_at"] == now - timedelta(minutes=1)
+
+
+async def test_replayed_far_future_collector_record_under_a_new_dedup_key_does_not_advance_the_device(client, auth_headers, db_session):
+    headers = await auth_headers("DCIM Manager")
+    collector, integration = await collector_with_integration(client, headers, integration_type="icmp")
+    far = "2099-01-01T00:00:00Z"
+    first = _timed_record(integration["id"], "10.9.0.3", far, v="original")
+    assert (await ingest_records(client, collector, [first]))["results"][0]["status"] == "accepted"
+    await db_session.rollback()
+    before = await _device_state(db_session, "10.9.0.3")
+
+    replay = _timed_record(integration["id"], "10.9.0.3", far, v="replay")  # same observation, new dedup key
+    assert (await ingest_records(client, collector, [replay]))["results"][0]["status"] == "accepted"
+    await db_session.rollback()
+    after = await _device_state(db_session, "10.9.0.3")
+    assert after["last_seen_at"] == before["last_seen_at"]  # did not creep forward with the wall clock
+    assert after["raw_attributes"]["v"] == "original"

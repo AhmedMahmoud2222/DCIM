@@ -65,12 +65,13 @@ def _is_device_key_conflict(exc: IntegrityError) -> bool:
     """True only for a unique-key collision on `(integration_id, external_identifier)`.
     Any other integrity failure (e.g. a foreign key on `integration_id`) is a real error
     and must propagate, never be converted into a recovery path."""
-    orig = getattr(exc, "orig", None)
-    for candidate in (orig, getattr(orig, "__cause__", None)):
-        if getattr(candidate, "sqlstate", None) == _UNIQUE_VIOLATION_SQLSTATE:
-            name = getattr(candidate, "constraint_name", None)
-            return name is None or name == _DEVICE_UNIQUE_CONSTRAINT
-    return False
+    # SQLAlchemy's asyncpg adapter exposes `sqlstate` on `exc.orig` but the violated
+    # constraint's name only on the underlying driver exception (`__cause__`), so gather
+    # each attribute from whichever layer carries it. An unknown constraint is NOT a match.
+    layers = (getattr(exc, "orig", None), getattr(getattr(exc, "orig", None), "__cause__", None))
+    sqlstate = next((s for s in (getattr(layer, "sqlstate", None) for layer in layers) if s), None)
+    name = next((n for n in (getattr(layer, "constraint_name", None) for layer in layers) if n), None)
+    return sqlstate == _UNIQUE_VIOLATION_SQLSTATE and name == _DEVICE_UNIQUE_CONSTRAINT
 
 
 async def _lock_device(db: AsyncSession, integration_id: uuid.UUID, external_identifier: str) -> DiscoveredDevice | None:
@@ -90,18 +91,52 @@ async def _lock_device(db: AsyncSession, integration_id: uuid.UUID, external_ide
     ).scalar_one_or_none()
 
 
+def _stored_observation_time(raw_attributes: dict | None) -> datetime | None:
+    """The unclamped collector observation time recorded in `raw_attributes["occurred_at"]`
+    (written by the collector ingest path from the record's own `occurred_at`). Absent or
+    unparseable -> None (callers then fall back to `last_seen_at` alone)."""
+    value = raw_attributes.get("occurred_at") if isinstance(raw_attributes, dict) else None
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 async def _apply_if_newer(
-    db: AsyncSession, existing: DiscoveredDevice, *, seen: datetime, raw_attributes: dict,
+    db: AsyncSession, existing: DiscoveredDevice, *, seen: datetime, raw_observed: datetime, raw_attributes: dict,
 ) -> tuple[DiscoveredDevice, bool]:
     """Monotonic update of a row the caller holds `FOR UPDATE`. Strictly newer wins;
     older and equal observations are a complete no-op (equal timestamps: the first
     committed writer wins, so an exact replay of the newest record never inflates
-    freshness)."""
-    if seen > existing.last_seen_at:
-        existing.last_seen_at = seen
-        existing.raw_attributes = raw_attributes
-        await _refresh_profile_match(db, existing, raw_attributes)
-        await db.flush()
+    freshness).
+
+    Two refinements use only the observation time already persisted in
+    `raw_attributes["occurred_at"]` (no schema change):
+
+    * Legacy rows: before DISC-ORDER-01 `last_seen_at` held Central *receipt* time, which
+      is never earlier than the true observation. The stored ordering value is therefore
+      `min(last_seen_at, stored occurred_at)`: for rows written under this contract
+      `last_seen_at <= occurred_at`, so it is unchanged; for legacy collector rows it
+      recovers the true observation time, so buffered observations that predate the old
+      receipt time are no longer discarded.
+    * Replay stability: a far-future observation is clamped against the *delivery* clock,
+      so the clamped value differs on every delivery. A clamped observation is therefore
+      applied only if its own unclamped time is newer than the stored one; an exact
+      replay (or an older far-future record) cannot advance `last_seen_at` merely because
+      wall-clock time moved."""
+    stored_raw = _stored_observation_time(existing.raw_attributes)
+    stored_seen = existing.last_seen_at if stored_raw is None else min(existing.last_seen_at, stored_raw)
+    if seen <= stored_seen:
+        return existing, False
+    if raw_observed > seen and stored_raw is not None and raw_observed <= stored_raw:
+        return existing, False  # clamped replay / older far-future record
+    existing.last_seen_at = seen
+    existing.raw_attributes = raw_attributes
+    await _refresh_profile_match(db, existing, raw_attributes)
+    await db.flush()
     return existing, False
 
 
@@ -132,15 +167,26 @@ async def ingest_discovery(
     propagate unchanged.
 
     Transition note: rows written before this contract hold receipt time in
-    `last_seen_at`, which can be slightly later than the true observation; a genuinely
-    newer record that falls inside that gap and arrives out of order is dropped once and
-    superseded by the next observation."""
+    `last_seen_at`, which can be later than the true observation. For collector rows the
+    true time is recovered from the persisted `raw_attributes["occurred_at"]` (see
+    `_apply_if_newer`), so buffered observations are not lost. Only a legacy row with no
+    persisted `occurred_at` (e.g. written by central polling, where receipt ~ observation)
+    keeps the documented limitation: a newer record inside the receipt gap that arrives
+    out of order is dropped once and superseded by the next observation.
+
+    Far-future observations are clamped to `now + MAX_FUTURE_SKEW` for ordering; replay
+    stability is enforced against the unclamped time (see `_apply_if_newer`). A clamped
+    value can hold a device ahead of real time for at most that skew from the delivery
+    that set it, and repeated deliveries cannot extend that."""
     now = datetime.now(UTC)
-    seen = normalize_observation_time(observed_at if observed_at is not None else now)
+    raw_observed = observed_at if observed_at is not None else now
+    if raw_observed.tzinfo is None:
+        raw_observed = raw_observed.replace(tzinfo=UTC)
+    seen = normalize_observation_time(raw_observed, now)
 
     existing = await _lock_device(db, integration_id, external_identifier)
     if existing is not None:
-        return await _apply_if_newer(db, existing, seen=seen, raw_attributes=raw_attributes)
+        return await _apply_if_newer(db, existing, seen=seen, raw_observed=raw_observed, raw_attributes=raw_attributes)
 
     device = DiscoveredDevice(
         id=uuid.uuid4(), integration_id=integration_id, external_identifier=external_identifier,
@@ -157,7 +203,7 @@ async def ingest_discovery(
         winner = await _lock_device(db, integration_id, external_identifier)
         if winner is None:
             raise
-        return await _apply_if_newer(db, winner, seen=seen, raw_attributes=raw_attributes)
+        return await _apply_if_newer(db, winner, seen=seen, raw_observed=raw_observed, raw_attributes=raw_attributes)
 
     await write_outbox_event(
         db, event_type="DeviceDiscovered", aggregate_type="discovered_device", aggregate_id=device.id,

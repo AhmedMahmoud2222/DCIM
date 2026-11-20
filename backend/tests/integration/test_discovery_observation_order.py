@@ -39,7 +39,10 @@ def factory_for(db_engine):
     return async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
 
 
-async def ingest(session, integration_id, *, observed_at, attrs=None, external_identifier=EXTERNAL_ID):
+async def ingest(
+    session, integration_id: uuid.UUID, *, observed_at: datetime | None,
+    attrs: dict | None = None, external_identifier: str = EXTERNAL_ID,
+):
     return await ingest_discovery(
         session, integration_id=integration_id, external_identifier=external_identifier,
         raw_attributes=attrs if attrs is not None else {"v": "x"}, correlation_id=None, causation_id=None,
@@ -68,9 +71,15 @@ async def counts(factory) -> dict:
         }
 
 
-async def commit_ingest(factory, integration_id, **kwargs):
+async def commit_ingest(
+    factory, integration_id: uuid.UUID, *, observed_at: datetime | None,
+    attrs: dict | None = None, external_identifier: str = EXTERNAL_ID,
+):
+    """`observed_at` is a required keyword on purpose: every test states its observation
+    time, and `None` ("use the current time") must be written explicitly."""
     async with factory() as session:
-        result = await ingest(session, integration_id, **kwargs)
+        result = await ingest(
+            session, integration_id, observed_at=observed_at, attrs=attrs, external_identifier=external_identifier)
         await session.commit()
         return result
 
@@ -343,3 +352,164 @@ async def test_legacy_receipt_time_last_seen_at_transition_drops_one_gap_observa
     await commit_ingest(factory, integration_id, observed_at=T0 + timedelta(minutes=11), attrs={"v": "next"})
     row = await device_row(factory, integration_id)
     assert row["raw_attributes"] == {"v": "next"} and row["last_seen_at"] == T0 + timedelta(minutes=11)
+
+
+# --- PR #369 review remediation: C1 replay stability, C2 legacy transition, C3 classifier ---------------------------
+
+CLOCK_BASE = datetime(2030, 6, 1, 12, 0, 0, tzinfo=UTC)
+
+
+def set_clock(monkeypatch, moment: datetime) -> None:
+    """Pins the application clock `ingest_discovery` reads (`datetime.now(UTC)`)."""
+    import datetime as _dt
+
+    class _Fixed(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return moment
+
+    monkeypatch.setattr(discovery_service, "datetime", _Fixed)
+
+
+def collector_attrs(occurred_at: datetime, **extra) -> dict:
+    """What the collector ingest path stores: the record's own occurred_at, unclamped."""
+    return {"occurred_at": occurred_at.isoformat(), **extra}
+
+
+async def test_c1_replayed_far_future_observation_cannot_advance_ordering_with_wall_clock(db_engine, monkeypatch):
+    integration_id = await seed_integration(db_engine)
+    factory = factory_for(db_engine)
+    far = CLOCK_BASE + timedelta(days=30)
+
+    set_clock(monkeypatch, CLOCK_BASE)
+    await commit_ingest(factory, integration_id, observed_at=far, attrs=collector_attrs(far, v="A"))
+    pinned = (await device_row(factory, integration_id))["last_seen_at"]
+    assert pinned == CLOCK_BASE + MAX_FUTURE_SKEW
+
+    for minutes in (3, 4, 20):  # exact replays under later delivery clocks (distinct dedup keys upstream)
+        set_clock(monkeypatch, CLOCK_BASE + timedelta(minutes=minutes))
+        await commit_ingest(factory, integration_id, observed_at=far, attrs=collector_attrs(far, v=f"replay-{minutes}"))
+        row = await device_row(factory, integration_id)
+        assert row["last_seen_at"] == pinned and row["raw_attributes"]["v"] == "A"
+
+    # A legitimate observation after the original 5-minute bound is accepted; replays did not extend the pin.
+    set_clock(monkeypatch, CLOCK_BASE + timedelta(minutes=6))
+    legit = CLOCK_BASE + timedelta(minutes=5, seconds=30)
+    await commit_ingest(factory, integration_id, observed_at=legit, attrs=collector_attrs(legit, v="legit"))
+    row = await device_row(factory, integration_id)
+    assert row["last_seen_at"] == legit and row["raw_attributes"]["v"] == "legit"
+
+
+async def test_c1_older_far_future_record_does_not_overwrite_a_newer_one_and_a_newer_one_wins(db_engine, monkeypatch):
+    integration_id = await seed_integration(db_engine)
+    factory = factory_for(db_engine)
+    newer_far, older_far = CLOCK_BASE + timedelta(days=60), CLOCK_BASE + timedelta(days=30)
+
+    set_clock(monkeypatch, CLOCK_BASE)
+    await commit_ingest(factory, integration_id, observed_at=newer_far, attrs=collector_attrs(newer_far, v="newer"))
+    set_clock(monkeypatch, CLOCK_BASE + timedelta(minutes=2))
+    await commit_ingest(factory, integration_id, observed_at=older_far, attrs=collector_attrs(older_far, v="older"))
+    assert (await device_row(factory, integration_id))["raw_attributes"]["v"] == "newer"
+
+    newest_far = CLOCK_BASE + timedelta(days=90)
+    await commit_ingest(factory, integration_id, observed_at=newest_far, attrs=collector_attrs(newest_far, v="newest"))
+    row = await device_row(factory, integration_id)
+    assert row["raw_attributes"]["v"] == "newest"
+    assert row["last_seen_at"] == CLOCK_BASE + timedelta(minutes=2) + MAX_FUTURE_SKEW
+
+
+async def test_c2_legacy_collector_row_accepts_multiple_buffered_observations_without_follow_up(db_engine):
+    """Legacy row: last_seen_at = Central receipt time R (later than the true observation O0, which
+    the collector path persisted in raw_attributes.occurred_at). Buffered observations that fall
+    between O0 and R are delivered after R, out of order, and nothing is polled afterwards."""
+    integration_id = await seed_integration(db_engine)
+    factory = factory_for(db_engine)
+    o0, receipt = T0, T0 + timedelta(minutes=10)
+    await commit_ingest(factory, integration_id, observed_at=o0, attrs=collector_attrs(o0, v="O0"))
+    async with factory() as session:  # simulate a pre-DISC-ORDER-01 row: receipt time in last_seen_at
+        await session.execute(text("UPDATE discovered_device SET last_seen_at = :t"), {"t": receipt})
+        await session.commit()
+
+    o1, o2, o3 = (T0 + timedelta(minutes=m) for m in (3, 6, 9))
+    for observed, tag in ((o2, "O2"), (o1, "O1"), (o3, "O3")):  # arrival order O2, O1, O3
+        await commit_ingest(factory, integration_id, observed_at=observed, attrs=collector_attrs(observed, v=tag))
+        if tag == "O1":
+            assert (await device_row(factory, integration_id))["raw_attributes"]["v"] == "O2"  # older than O2: no-op
+    row = await device_row(factory, integration_id)
+    assert row["raw_attributes"]["v"] == "O3" and row["last_seen_at"] == o3  # newest buffered state, no follow-up poll
+
+    # A replay of the original legacy observation stays a no-op.
+    await commit_ingest(factory, integration_id, observed_at=o0, attrs=collector_attrs(o0, v="O0-replay"))
+    assert (await device_row(factory, integration_id))["raw_attributes"]["v"] == "O3"
+
+
+async def test_c2_legacy_row_without_persisted_observation_time_keeps_the_documented_limitation(db_engine):
+    """Residual, accepted limitation (e.g. a legacy centrally-polled row: receipt ~ observation):
+    without a persisted occurred_at the row's receipt-time last_seen_at is the only order key."""
+    integration_id = await seed_integration(db_engine)
+    factory = factory_for(db_engine)
+    await commit_ingest(factory, integration_id, observed_at=T0, attrs={"protocol": "icmp"})
+    async with factory() as session:
+        await session.execute(text("UPDATE discovered_device SET last_seen_at = :t"), {"t": T0 + timedelta(minutes=10)})
+        await session.commit()
+    await commit_ingest(factory, integration_id, observed_at=T0 + timedelta(minutes=5), attrs={"protocol": "icmp", "v": "gap"})
+    assert "v" not in (await device_row(factory, integration_id))["raw_attributes"]  # dropped once
+    await commit_ingest(factory, integration_id, observed_at=T0 + timedelta(minutes=11), attrs={"protocol": "icmp", "v": "next"})
+    assert (await device_row(factory, integration_id))["raw_attributes"]["v"] == "next"  # superseded by the next poll
+
+
+def _unique_violation(constraint_name):
+    class _Orig(Exception):
+        sqlstate = "23505"
+
+    orig = _Orig()
+    orig.constraint_name = constraint_name
+    return IntegrityError("INSERT ...", {}, orig)
+
+
+def test_c3_classifier_accepts_only_the_device_key_constraint():
+    assert discovery_service._is_device_key_conflict(_unique_violation(discovery_service._DEVICE_UNIQUE_CONSTRAINT))
+    assert not discovery_service._is_device_key_conflict(_unique_violation("discovered_device_pkey"))
+    assert not discovery_service._is_device_key_conflict(_unique_violation("uq_some_other_table_col"))
+    assert not discovery_service._is_device_key_conflict(_unique_violation(None))  # unknown constraint: not a match
+
+    class _FK(Exception):
+        sqlstate = "23503"
+
+    assert not discovery_service._is_device_key_conflict(IntegrityError("INSERT ...", {}, _FK()))
+    assert not discovery_service._is_device_key_conflict(IntegrityError("INSERT ...", {}, Exception("no sqlstate")))
+
+
+async def test_c3_real_postgres_duplicate_key_error_carries_the_constraint_name_the_classifier_expects(db_engine):
+    integration_id = await seed_integration(db_engine)
+    factory = factory_for(db_engine)
+    await commit_ingest(factory, integration_id, observed_at=T0)
+    async with factory() as session:
+        duplicate = discovery_service.DiscoveredDevice(
+            id=uuid.uuid4(), integration_id=integration_id, external_identifier=EXTERNAL_ID,
+            discovered_at=T0, last_seen_at=T0, raw_attributes={}, status="new")
+        with pytest.raises(IntegrityError) as caught:
+            async with session.begin_nested():
+                session.add(duplicate)
+                await session.flush()
+    assert discovery_service._is_device_key_conflict(caught.value)
+
+
+async def test_c3_unrelated_unique_violation_is_reraised_not_recovered(db_engine, monkeypatch):
+    """A primary-key collision on `discovered_device` is a unique violation (23505) on a different
+    constraint; it must propagate, not be treated as the device-key race."""
+    integration_id = await seed_integration(db_engine)
+    factory = factory_for(db_engine)
+    await commit_ingest(factory, integration_id, observed_at=T0, external_identifier="existing")
+    existing_id = (await device_row(factory, integration_id, "existing"))["id"]
+    monkeypatch.setattr(discovery_service.uuid, "uuid4", lambda: existing_id)  # forces a PK collision
+
+    before = await counts(factory)
+    async with factory() as session:
+        with pytest.raises(IntegrityError) as caught:
+            await ingest(session, integration_id, observed_at=T0, external_identifier="brand-new")
+        assert not discovery_service._is_device_key_conflict(caught.value)
+        assert getattr(caught.value.orig, "sqlstate", None) == "23505"
+        await session.rollback()
+    assert await counts(factory) == before
+    assert await device_row(factory, integration_id, "brand-new") is None
