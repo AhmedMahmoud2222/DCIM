@@ -1,0 +1,67 @@
+{
+  "run_id": "full-2026-11-20-0657",
+  "mode": "FULL",
+  "time_utc": "2026-11-20T02:57:07Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "lease acquired; policy and changelog read; index inspected"
+    },
+    {
+      "step": 1,
+      "result": "2 open PRs (#361,#363), 18 open issues; ruleset verified"
+    },
+    {
+      "step": 2,
+      "result": "exact head and changed paths verified; no unsubstantiated fix credited"
+    },
+    {
+      "step": 3,
+      "result": "prioritized security/auth PR #361 then workflow PR #363"
+    },
+    {
+      "step": 4,
+      "result": "PR #363 three inline findings with replies; resolution state not independently established; no resolution"
+    },
+    {
+      "step": "4a",
+      "result": "historical findings remain gated; no checklist closure"
+    },
+    {
+      "step": 5,
+      "result": "#361 draft, Tier 2, CI green, no exact-head independent acceptance; #363 behind and class I workflow credential permissions"
+    },
+    {
+      "step": 6,
+      "result": "no supersession established"
+    },
+    {
+      "step": 7,
+      "result": "no duplicate prompts sent"
+    },
+    {
+      "step": 8,
+      "result": "no merge: #361 draft and missing reviews; #363 behind and authorization/review gates"
+    },
+    {
+      "step": 9,
+      "result": "no new class I approval inferred"
+    },
+    {
+      "step": 10,
+      "result": "report prepared"
+    }
+  ],
+  "ruleset_bypass": "all six pull_request",
+  "production_hold_214": "intact",
+  "merges": [],
+  "writes": [
+    "lease",
+    "event",
+    "release"
+  ],
+  "limitations": [
+    "GraphQL thread resolution state unavailable from REST review comments",
+    "Current Copilot reviews absent in REST review listing"
+  ]
+}
