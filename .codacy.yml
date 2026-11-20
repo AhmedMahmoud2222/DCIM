@@ -6,13 +6,18 @@ engines:
     config:
       dialect: postgres
       templater: raw
-      rules:
-        # Disable T-SQL-specific rules that do not apply to PostgreSQL
-        ST05: false  # Quoted identifiers
-        ST06: false  # Column references
-        ST09: false  # Unquoted identifiers
+  pyflakes:
+    enabled: true
+  # Codacy-specific UnusedCode is a false positive for pytest fixture imports
+  # (race is used as a fixture parameter, _scalar is used in test bodies).
+  # Scoped to the specific test file only.
 file_patterns:
   - pattern: "backend/scripts/*.sql"
     engine: sqlfluff
     config:
       dialect: postgres
+  - pattern: "backend/tests/api/test_equipment_instantiation.py"
+    engine: pyflakes
+    config:
+      ignore:
+        - F401
