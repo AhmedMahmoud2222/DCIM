@@ -1,0 +1,18 @@
+# Codacy configuration for DCIM repository
+# Ensures SQL analysis uses PostgreSQL dialect for PostgreSQL scripts.
+engines:
+  sqlfluff:
+    enabled: true
+    config:
+      dialect: postgres
+      templater: raw
+      rules:
+        # Disable T-SQL-specific rules that do not apply to PostgreSQL
+        ST05: false  # Quoted identifiers
+        ST06: false  # Column references
+        ST09: false  # Unquoted identifiers
+file_patterns:
+  - pattern: "backend/scripts/*.sql"
+    engine: sqlfluff
+    config:
+      dialect: postgres
