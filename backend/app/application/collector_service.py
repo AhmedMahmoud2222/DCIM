@@ -410,6 +410,7 @@ async def run_polling_cycle(db: AsyncSession, *, collector_id: uuid.UUID) -> lis
             await ingest_discovery(
                 db, integration_id=integration.id, external_identifier=result.external_identifier,
                 raw_attributes=result.raw_attributes, correlation_id=None, causation_id=None,
+                observed_at=result.observed_at,
             )
             outcomes.append(
                 PollOutcome(integration_id=integration.id, succeeded=True, external_identifier=result.external_identifier)

@@ -16,9 +16,11 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.audit_service import write_audit_log
+from app.application.network.neighbor_service import _clamp as normalize_observation_time
 from app.application.network.profile_matching import DeviceFacts
 from app.application.network.profile_service import resolve_profile
 from app.application.outbox_service import write_outbox_event
@@ -28,6 +30,8 @@ from app.domain.integration.models import DiscoveredDevice, ReconciliationDiff
 
 _FACT_FIELDS = ("sys_object_id", "sys_descr", "model", "hardware_revision", "firmware")
 _FACT_MAX_LENGTH = 512
+_DEVICE_UNIQUE_CONSTRAINT = "uq_discovered_device_integration_id_external_identifier"
+_UNIQUE_VIOLATION_SQLSTATE = "23505"
 
 
 def extract_facts(raw_attributes: dict) -> DeviceFacts | None:
@@ -57,39 +61,103 @@ async def _refresh_profile_match(db: AsyncSession, device: DiscoveredDevice, raw
     device.profile_match = {**result.as_dict(), "facts": snapshot, "evaluated_at": datetime.now(UTC).isoformat()}
 
 
-async def ingest_discovery(
-    db: AsyncSession, *, integration_id: uuid.UUID, external_identifier: str, raw_attributes: dict,
-    correlation_id: str | None, causation_id: str | None,
-) -> tuple[DiscoveredDevice, bool]:
-    """Upserts a `DiscoveredDevice` row keyed on `(integration_id, external_identifier)`
-    -- the unique constraint on that pair means a device seen again just updates
-    `last_seen_at`/`raw_attributes`, never creates a duplicate row. Returns
-    `(device, is_new)`. Emits `DeviceDiscovered` (new) via the existing Outbox -- never
-    a second event bus."""
-    now = datetime.now(UTC)
-    existing = (
+def _is_device_key_conflict(exc: IntegrityError) -> bool:
+    """True only for a unique-key collision on `(integration_id, external_identifier)`.
+    Any other integrity failure (e.g. a foreign key on `integration_id`) is a real error
+    and must propagate, never be converted into a recovery path."""
+    orig = getattr(exc, "orig", None)
+    for candidate in (orig, getattr(orig, "__cause__", None)):
+        if getattr(candidate, "sqlstate", None) == _UNIQUE_VIOLATION_SQLSTATE:
+            name = getattr(candidate, "constraint_name", None)
+            return name is None or name == _DEVICE_UNIQUE_CONSTRAINT
+    return False
+
+
+async def _lock_device(db: AsyncSession, integration_id: uuid.UUID, external_identifier: str) -> DiscoveredDevice | None:
+    """`SELECT ... FOR UPDATE` on the one device row. `populate_existing` makes a session
+    that already holds this instance refresh it from the just-locked (committed) row, so
+    the ordering check always sees the state it is actually serialized against."""
+    return (
         await db.execute(
-            select(DiscoveredDevice).where(
+            select(DiscoveredDevice)
+            .where(
                 DiscoveredDevice.integration_id == integration_id,
                 DiscoveredDevice.external_identifier == external_identifier,
             )
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
 
-    if existing is not None:
-        existing.last_seen_at = now
+
+async def _apply_if_newer(
+    db: AsyncSession, existing: DiscoveredDevice, *, seen: datetime, raw_attributes: dict,
+) -> tuple[DiscoveredDevice, bool]:
+    """Monotonic update of a row the caller holds `FOR UPDATE`. Strictly newer wins;
+    older and equal observations are a complete no-op (equal timestamps: the first
+    committed writer wins, so an exact replay of the newest record never inflates
+    freshness)."""
+    if seen > existing.last_seen_at:
+        existing.last_seen_at = seen
         existing.raw_attributes = raw_attributes
         await _refresh_profile_match(db, existing, raw_attributes)
         await db.flush()
-        return existing, False
+    return existing, False
+
+
+async def ingest_discovery(
+    db: AsyncSession, *, integration_id: uuid.UUID, external_identifier: str, raw_attributes: dict,
+    correlation_id: str | None, causation_id: str | None, observed_at: datetime | None = None,
+) -> tuple[DiscoveredDevice, bool]:
+    """Upserts a `DiscoveredDevice` row keyed on `(integration_id, external_identifier)`.
+    Returns `(device, is_new)`. Emits `DeviceDiscovered` (new) via the existing Outbox --
+    never a second event bus.
+
+    Observation-order contract (DISC-ORDER-01): `DiscoveredDevice.last_seen_at` is the
+    normalized *observation* time of the newest accepted observation (not receipt time;
+    `discovered_at` remains the first Central receipt time). `observed_at` is that time:
+    collectors pass the record's `occurred_at`, central polling the driver's
+    `AcquisitionResult.observed_at`; `None` means "now". Naive values are treated as UTC
+    and values beyond `MAX_FUTURE_SKEW` ahead are clamped so a fast clock cannot pin a
+    device against later observations. Old observations are legitimate and unbounded.
+
+    An existing row is updated only if `observed_at > last_seen_at` (strict). An older or
+    equal observation is a total no-op: `raw_attributes`, `profile_match`, `last_seen_at`,
+    reconciliation state and the managed-asset association are untouched, and no events
+    are produced. The existing row is read `FOR UPDATE`, so concurrent out-of-order
+    deliveries serialize on it and converge on the newest observation regardless of
+    arrival or commit order. A first-time insert runs inside a SAVEPOINT; if it loses a
+    unique-key race, the winner's row is locked and the same monotonic rule applies, and
+    only the creating call emits creation events. Non-duplicate integrity errors
+    propagate unchanged.
+
+    Transition note: rows written before this contract hold receipt time in
+    `last_seen_at`, which can be slightly later than the true observation; a genuinely
+    newer record that falls inside that gap and arrives out of order is dropped once and
+    superseded by the next observation."""
+    now = datetime.now(UTC)
+    seen = normalize_observation_time(observed_at if observed_at is not None else now)
+
+    existing = await _lock_device(db, integration_id, external_identifier)
+    if existing is not None:
+        return await _apply_if_newer(db, existing, seen=seen, raw_attributes=raw_attributes)
 
     device = DiscoveredDevice(
         id=uuid.uuid4(), integration_id=integration_id, external_identifier=external_identifier,
-        discovered_at=now, last_seen_at=now, raw_attributes=raw_attributes, status="new",
+        discovered_at=now, last_seen_at=seen, raw_attributes=raw_attributes, status="new",
     )
     await _refresh_profile_match(db, device, raw_attributes)
-    db.add(device)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(device)
+            await db.flush()
+    except IntegrityError as exc:
+        if not _is_device_key_conflict(exc):
+            raise
+        winner = await _lock_device(db, integration_id, external_identifier)
+        if winner is None:
+            raise
+        return await _apply_if_newer(db, winner, seen=seen, raw_attributes=raw_attributes)
 
     await write_outbox_event(
         db, event_type="DeviceDiscovered", aggregate_type="discovered_device", aggregate_id=device.id,
