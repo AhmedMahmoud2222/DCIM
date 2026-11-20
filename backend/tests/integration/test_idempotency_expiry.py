@@ -516,7 +516,8 @@ async def test_t41_the_deadline_is_taken_at_entry_so_a_slow_first_attempt_shrink
     monkeypatch.setattr(idem, "_try_claim", slow_first_insert)
     with pytest.raises(idem.IdempotencyStillProcessing):
         await _claim(sessions(), key)
-    assert sum(fake_time.sleeps) <= 1.0 + idem._POLL_INTERVAL_SECONDS  # noqa: SLF001  (5 s budget - 4 s spent)
+    # 5 s budget - 4 s spent = 1 s, plus at most one poll interval (tolerance for float accumulation)
+    assert sum(fake_time.sleeps) <= 1.0 + idem._POLL_INTERVAL_SECONDS + 1e-6  # noqa: SLF001
 
 
 async def test_t42_a_frozen_expiry_clock_cannot_hang_the_loop(sessions, monkeypatch):
