@@ -74,7 +74,7 @@ export interface AlarmHistoryFilters {
 }
 
 export const getLatestTelemetry = (managedAssetId: string) =>
-  apiFetch<TelemetryReading[]>(`/telemetry/latest?managed_asset_id=${encodeURIComponent(managedAssetId)}&limit=100`);
+  apiFetch<TelemetryReading[]>(`/telemetry/latest?managed_asset_id=${encodeURIComponent(managedAssetId)}&per_series=true&limit=100`);
 
 export interface TelemetryHistoryFilters {
   seriesKey?: string;
