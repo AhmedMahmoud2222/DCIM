@@ -35,6 +35,7 @@ from app.application.idempotency import (
 )
 from app.application.lifecycle_settings import get_configured_allowed_transitions
 from app.application.outbox_service import write_outbox_event
+from app.application.placement_service import lock_rack_placement_and_recheck_scope
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.audit.models import AuditLog
@@ -265,6 +266,14 @@ async def transition_lifecycle(
     if asset is None:
         raise NotFoundError(f"ManagedAsset {asset_id} not found.")
     await _ensure_managed_asset_scope(db, ctx.scope, asset)
+    if asset.asset_type == "rack":
+        # DB-26 (#360): a rack's site scope is its CURRENT placement, which a concurrent move can change after the
+        # check above. Take the placement writers' locks (managed_asset row -> AUTHORITY(S) -> placement(rack); no path
+        # takes a placement lock and then waits for this row) and re-check before any write. Same 404 as above.
+        try:
+            await lock_rack_placement_and_recheck_scope(db, ctx.scope, asset.id)
+        except NotFoundError:
+            raise NotFoundError(f"ManagedAsset {asset_id} not found.") from None
 
     is_equipment = asset.asset_type == "equipment"
     if is_equipment and asset.lifecycle_status in LEGACY_LIFECYCLE_STATUSES:

@@ -24,9 +24,11 @@ from app.application.audit_service import write_audit_log
 from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.outbox_service import write_outbox_event
 from app.application.placement_service import (
+    ObservedPlacement,
     PlacementConflict,
     get_current_equipment_placement,
     get_current_rack_placement,
+    lock_rack_placement_and_recheck_scope,
     move_rack,
 )
 from app.application.rbac import require_permission
@@ -1091,6 +1093,7 @@ async def accept_import_candidate(
             raise ApiError(status_code=403, title="Forbidden", detail="Moving a rack requires the rack:place permission.")
         if body.apply_position:
             await ensure_rack_access(db, ctx.scope_for("rack:place"), matched_id)
+            await lock_rack_placement_and_recheck_scope(db, ctx.scope_for("rack:place"), matched_id)  # DB-26 (#360)
             await ensure_room_access(db, ctx.scope_for("rack:place"), floor_plan.room_id)
         if body.apply_position and placement is not None and body.placement_version is None:
             raise ApiError(status_code=428, title="Precondition Required", detail="placement_version is required to move an already-placed rack.")
@@ -1134,6 +1137,7 @@ async def accept_import_candidate(
                 new_placement = await move_rack(
                     db, rack_id=rack.id, room_id=floor_plan.room_id, x_mm=canonical["x_mm"], y_mm=canonical["y_mm"],
                     rotation_deg=canonical["rotation_deg"], if_match_version=body.placement_version,
+                    observed=ObservedPlacement(placement),  # the placement this decision was based on (read above, before any wait)
                 )
             except PlacementConflict as exc:
                 await db.rollback()
