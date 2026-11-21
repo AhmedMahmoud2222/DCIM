@@ -51,6 +51,13 @@ celery_app.conf.update(
             "schedule": 3600.0,
             "options": {"queue": "maintenance"},
         },
+        # DB-03 (#357): a strict no-op (no session, no SQL) while idempotency_purge_enabled is False, its default.
+        # Enabling it later is a configuration change plus worker restart, authorized separately.
+        "purge-expired-idempotency-keys": {
+            "task": "app.infrastructure.tasks.maintenance.purge_expired_idempotency_keys",
+            "schedule": 300.0,
+            "options": {"queue": "maintenance"},
+        },
         "ensure-audit-log-partitions": {
             "task": "app.infrastructure.tasks.audit_partition_maintenance.ensure_future_partitions",
             "schedule": 86400.0,
