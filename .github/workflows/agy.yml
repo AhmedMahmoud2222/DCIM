@@ -1,0 +1,180 @@
+# Antigravity (agy) independent review, called by mentioning @agy in a PR or issue comment.
+# Version: v2
+#
+# Trigger scope: issue_comment only (runs from the default branch, so a PR author cannot
+# edit this file to trigger it). The command must start a line:
+#   on a PR:     `@agy review [focus]`
+#   on an issue: `@agy review #<PR number> [focus]`
+# Humans need OWNER, MEMBER or COLLABORATOR. Agents need an exact login in vars.AGY_ALLOWED_BOTS.
+# The review prompt is .github/agy/review-template.md, loaded from the default branch.
+#
+# Flow: gate (no secrets) -> review (read-only token, Gemini key, no GitHub write rights)
+#       -> publish (no secrets, posts one COMMENT tied to the reviewed SHA).
+# Output follows AGENTS.md review guidelines: head SHA first, P1/P2/P3 badges, one verdict line.
+# Setup: docs/security/AGY_AGENT_AUTHORITY.md
+name: Antigravity
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Authorize command
+    if: contains(github.event.comment.body, '@agy')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      authorized: ${{ steps.verify.outputs.authorized }}
+      sha: ${{ steps.verify.outputs.sha }}
+      number: ${{ steps.verify.outputs.number }}
+      focus: ${{ steps.command.outputs.focus }}
+    steps:
+      - name: Checkout scripts from the workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github
+          persist-credentials: false
+      - id: command
+        env:
+          COMMENT: ${{ github.event.comment.body }}
+          ASSOCIATION: ${{ github.event.comment.author_association }}
+          USER_TYPE: ${{ github.event.comment.user.type }}
+          USER_LOGIN: ${{ github.event.comment.user.login }}
+          ALLOWED_BOTS: ${{ vars.AGY_ALLOWED_BOTS }}
+          IS_PR: ${{ github.event.issue.pull_request != null }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: python3 .github/scripts/agy_prompt.py gate
+      - id: verify
+        if: steps.command.outputs.authorized == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ steps.command.outputs.pr }}
+        run: |
+          set -euo pipefail
+          echo "authorized=false" >> "$GITHUB_OUTPUT"
+          pr="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}")"
+          [[ "$(jq -r .state <<<"$pr")" == open ]] || { echo "::notice::PR is not open."; exit 0; }
+          # Fork PRs are refused: their code would run next to the Gemini key.
+          [[ "$(jq -r .head.repo.full_name <<<"$pr")" == "$GITHUB_REPOSITORY" ]] \
+            || { echo "::notice::Fork PRs are not reviewed."; exit 0; }
+          {
+            echo "sha=$(jq -r .head.sha <<<"$pr")"
+            echo "number=${NUMBER}"
+            echo "authorized=true"
+          } >> "$GITHUB_OUTPUT"
+
+  review:
+    name: Antigravity review (read-only)
+    needs: gate
+    if: needs.gate.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: agy-agent
+    concurrency:
+      group: agy-${{ needs.gate.outputs.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: read
+    env:
+      SHA: ${{ needs.gate.outputs.sha }}
+      NUMBER: ${{ needs.gate.outputs.number }}
+      GH_TOKEN: ${{ github.token }}
+      FOCUS: ${{ needs.gate.outputs.focus }}
+      TRIGGER_ISSUE: ${{ github.event.issue.pull_request == null && github.event.issue.number || '' }}
+    steps:
+      # The workspace is the default-branch commit this workflow came from, so AGENTS.md, the review
+      # template and any agent instruction files are trusted. PR code reaches agy only as a diff file.
+      - name: Checkout trusted default-branch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Gather PR, issues, earlier reviews and CI results
+        run: |
+          set -euo pipefail
+          d="${RUNNER_TEMP}/ctx"; mkdir -p "$d"
+          api() { gh api "repos/${GITHUB_REPOSITORY}/$1" "${@:2}"; }
+          api "pulls/${NUMBER}" > "$d/pr.json"
+          [[ "$(jq -r .head.sha "$d/pr.json")" == "$SHA" ]] \
+            || { echo "::error::PR head moved before the review started"; exit 1; }
+          api "pulls/${NUMBER}" -H "Accept: application/vnd.github.diff" > "$d/diff.patch"
+          api "pulls/${NUMBER}/comments?per_page=100" > "$d/threads.json"
+          api "commits/${SHA}/check-runs?per_page=100" --jq '.check_runs' > "$d/checks.json"
+          nums="$(python3 .github/scripts/agy_prompt.py issues "$d/pr.json")"
+          echo '[]' > "$d/issues.json"
+          for n in $nums; do
+            api "issues/${n}" --jq '{number,title,body}' 2>/dev/null || true
+          done | jq -s '.' > "$d/issues.json"
+      - name: Build review prompt from the trusted template
+        run: python3 .github/scripts/agy_prompt.py build "${RUNNER_TEMP}/ctx" .github/agy/review-template.md "${RUNNER_TEMP}/prompt.txt"
+      - name: Install agy
+        env:
+          AGY_INSTALLER_SHA256: ${{ vars.AGY_INSTALLER_SHA256 }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "${RUNNER_TEMP}/agy-install.sh" https://antigravity.google/cli/install.sh
+          if [[ -n "${AGY_INSTALLER_SHA256:-}" ]]; then
+            echo "${AGY_INSTALLER_SHA256}  ${RUNNER_TEMP}/agy-install.sh" | sha256sum --check --strict -
+          else
+            echo "::warning::AGY_INSTALLER_SHA256 is not set; the installer script is not pinned."
+          fi
+          bash "${RUNNER_TEMP}/agy-install.sh"   # the installer verifies a SHA512 checksum of the binary
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+      - name: Run agy headless
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ''
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.gemini/antigravity-cli"
+          echo '{ "modelProvider": "gemini" }' > "${HOME}/.gemini/antigravity-cli/settings.json"
+          # agy -p prints nothing without a TTY (upstream bug #76), so run it under a pseudo-terminal.
+          AGY_PROMPT_FILE="${RUNNER_TEMP}/prompt.txt" script -qec .github/scripts/agy_run.sh /dev/null > "${RUNNER_TEMP}/raw.txt"
+          tr -d '\r' < "${RUNNER_TEMP}/raw.txt" > "${RUNNER_TEMP}/review.md"
+          test -s "${RUNNER_TEMP}/review.md" || { echo "::error::agy returned no output"; exit 1; }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: agy-review
+          path: ${{ runner.temp }}/review.md
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Post review comment
+    needs: [gate, review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: agy-review
+      - name: Post comment if the PR head is unchanged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ needs.gate.outputs.number }}
+          SHA: ${{ needs.gate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          head="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}" --jq .head.sha)"
+          {
+            echo "${SHA}"; echo
+            echo "**Antigravity review**"; echo
+            if [[ "$head" != "$SHA" ]]; then
+              echo "> Stale: PR head moved to \`${head}\` after this review. It does not count for the current head."; echo
+            fi
+            head -c 60000 review.md
+          } > comment.md
+          gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file comment.md
