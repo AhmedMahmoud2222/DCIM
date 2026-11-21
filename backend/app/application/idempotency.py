@@ -42,11 +42,24 @@ generation still equals the one the caller was issued. A fenced-out owner gets
 `IdempotencyClaimLost` from `complete_claim()` (its caller's transaction, including the
 domain write, is rolled back) and `release_claim()` becomes a no-op, so it can never complete,
 overwrite or delete the replacement owner's claim.
+
+Expiry (DB-03, issue #357): a ledger row is a bounded-window record, not a permanent one. A row whose
+`expires_at <= now` (inclusive) is treated as absent *before* the request-hash comparison: the next request
+for that key replaces it through a non-blocking compare-and-swap (`_try_replace_expired`) that bumps the
+fencing generation once, clears the stored response, records the new hash and renews `expires_at`. After
+expiry the same key therefore executes again; a create whose permanent business key already exists
+answers 409, not the original 201 (docs/implementation/IDEMPOTENCY_EXPIRY.md). `expires_at` is renewed on
+every transition into 'processing' (new claim, stale reclaim, expired replacement) and never on completion.
+
+Two clocks are deliberately separate: `_now()` (injectable) decides expiry and staleness, while the polling
+deadline uses `time.monotonic()` taken at function entry, so a frozen or skewed expiry clock can never
+hang the loop and a blocked first INSERT consumes the same budget as polling.
 """
 
 import asyncio
 import hashlib
 import json
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -64,6 +77,31 @@ _DEFAULT_TTL = timedelta(hours=24)
 STALE_CLAIM_TIMEOUT = timedelta(seconds=30)
 _POLL_INTERVAL_SECONDS = 0.05
 _POLL_MAX_WAIT_SECONDS = 5.0
+
+# Principals this module generates. Anything else (notably the migration's inert `legacy:unscoped`
+# marker) is rejected so a caller can never adopt or replay a legacy row.
+_ALLOWED_PRINCIPAL_PREFIXES = ("user:", "collector:")
+_MAX_PRINCIPAL_LENGTH = 100
+
+
+def _now() -> datetime:
+    """Expiry/staleness clock. Injectable (monkeypatched in tests); never used for the polling deadline."""
+    return datetime.now(UTC)
+
+
+def _monotonic() -> float:
+    """Polling-deadline clock. Independent of `_now()` so a frozen expiry clock cannot hang the loop."""
+    return time.monotonic()
+
+
+def _validate_principal(principal: str) -> None:
+    if not isinstance(principal, str) or not principal or not principal.strip():
+        raise ValueError("an idempotency claim requires a non-empty authenticated principal")
+    if len(principal) > _MAX_PRINCIPAL_LENGTH or not principal.startswith(_ALLOWED_PRINCIPAL_PREFIXES):
+        raise ValueError("an idempotency claim requires a user: or collector: principal")
+    subject = principal.split(":", 1)[1]
+    if not subject or any(ch.isspace() or ord(ch) < 32 for ch in subject):
+        raise ValueError("an idempotency claim requires a well-formed principal")
 
 
 class IdempotencyConflict(Exception):
@@ -104,6 +142,14 @@ class ClaimRef:
         return cls(id=claim.id, generation=claim.claim_generation)
 
 
+@dataclass(frozen=True)
+class Acquired:
+    """Row id and the fencing generation a claim statement actually issued (RETURNING, not re-read)."""
+
+    id: uuid.UUID
+    generation: int
+
+
 def hash_request_body(body: dict) -> str:
     canonical = json.dumps(body, sort_keys=True, default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -120,8 +166,8 @@ def collector_principal(collector_id: uuid.UUID) -> str:
 
 
 async def _try_claim(
-    db: AsyncSession, *, principal: str, key: str, endpoint: str, request_hash: str
-) -> uuid.UUID | None:
+    db: AsyncSession, *, principal: str, key: str, endpoint: str, request_hash: str, ttl: timedelta
+) -> "Acquired | None":
     table = _TABLE
     stmt = (
         pg_insert(table)
@@ -134,20 +180,24 @@ async def _try_claim(
             status="processing",
             response_status=None,
             response_body=None,
-            expires_at=datetime.now(UTC) + _DEFAULT_TTL,
+            expires_at=_now() + ttl,
         )
         .on_conflict_do_nothing(index_elements=["principal", "key", "endpoint"])
-        .returning(table.c.id)
+        .returning(table.c.id, table.c.claim_generation)
     )
     result = await db.execute(stmt)
-    claimed_id = result.scalar_one_or_none()
+    row = result.one_or_none()
     await db.commit()
-    return claimed_id
+    return Acquired(row[0], row[1]) if row is not None else None
 
 
-async def _try_reclaim_stale(db: AsyncSession, record: IdempotencyKey) -> uuid.UUID | None:
+async def _try_reclaim_stale(
+    db: AsyncSession, record: IdempotencyKey, *, ttl: timedelta = _DEFAULT_TTL
+) -> "Acquired | None":
+    """Compare-and-swap takeover of a non-expired 'processing' row whose owner went quiet. Renews
+    `expires_at` (a new processing generation always starts with a full lifetime)."""
     table = _TABLE
-    now = datetime.now(UTC)
+    now = _now()
     stale_before = now - STALE_CLAIM_TIMEOUT
     stmt = (
         update(table)
@@ -157,32 +207,94 @@ async def _try_reclaim_stale(db: AsyncSession, record: IdempotencyKey) -> uuid.U
             table.c.claim_generation == record.claim_generation,
             table.c.updated_at < stale_before,
         )
-        .values(status="processing", updated_at=now, claim_generation=table.c.claim_generation + 1)
-        .returning(table.c.id)
+        .values(
+            status="processing", updated_at=now, expires_at=now + ttl,
+            claim_generation=table.c.claim_generation + 1,
+        )
+        .returning(table.c.id, table.c.claim_generation)
     )
     result = await db.execute(stmt)
-    reclaimed_id = result.scalar_one_or_none()
+    row = result.one_or_none()
     await db.commit()
-    return reclaimed_id
+    return Acquired(row[0], row[1]) if row is not None else None
+
+
+async def _try_replace_expired(
+    db: AsyncSession, record: IdempotencyKey, *, request_hash: str, now: datetime, ttl: timedelta
+) -> "Acquired | None":
+    """Non-blocking compare-and-swap that starts a new processing generation on an expired row.
+
+    The row is matched by id AND the generation this caller observed AND the inclusive expiry predicate, and
+    is locked with FOR UPDATE SKIP LOCKED: a row that is locked (a concurrent replacement, an owner
+    completing, a purge) or that changed yields zero rows immediately, never a wait. Exactly one contender
+    wins and bumps the generation once. No rollback is ever issued here (a session rollback would expire the
+    caller's ORM objects, e.g. `ctx.user`), only an immediate commit."""
+    table = _TABLE
+    target = (
+        select(table.c.id)
+        .where(
+            table.c.id == record.id,
+            table.c.claim_generation == record.claim_generation,
+            table.c.expires_at <= now,
+        )
+        .with_for_update(skip_locked=True)
+        .scalar_subquery()
+    )
+    stmt = (
+        update(table)
+        .where(table.c.id == target)
+        .values(
+            request_hash=request_hash, status="processing", response_status=None, response_body=None,
+            claim_generation=table.c.claim_generation + 1, expires_at=now + ttl, updated_at=now,
+        )
+        .returning(table.c.id, table.c.claim_generation)
+    )
+    result = await db.execute(stmt)
+    row = result.one_or_none()
+    await db.commit()
+    return Acquired(row[0], row[1]) if row is not None else None
+
+
+async def _load_claim(db: AsyncSession, acquired: "Acquired") -> IdempotencyKey:
+    """Reload the row this caller just acquired, and prove it is still the caller's.
+
+    The acquiring statement committed (releasing its connection) before this read, so another request may
+    have reclaimed, replaced, completed or released the row in between. `populate_existing=True` is required
+    (the identity map may hold an older generation), but it would also silently hand this caller the NEWER
+    owner's generation, so the reload must match exactly the generation the statement returned and still be
+    'processing'. Anything else means the claim was lost before it was ever used: the caller must not act on
+    it, and complete_claim/release_claim (fenced on the issued generation) stay harmless to the new owner."""
+    claim = await db.get(IdempotencyKey, acquired.id, populate_existing=True)
+    if claim is None or claim.status != "processing" or claim.claim_generation != acquired.generation:
+        raise IdempotencyClaimLost()
+    return claim
 
 
 async def get_or_claim(
-    db: AsyncSession, *, principal: str, key: str, endpoint: str, request_hash: str
+    db: AsyncSession, *, principal: str, key: str, endpoint: str, request_hash: str,
+    ttl: timedelta = _DEFAULT_TTL,
 ) -> IdempotencyOutcome:
     """Returns either a completed record to replay, or a claim this caller now owns.
 
     `principal` is the server-derived authenticated identity (user_principal / collector_principal).
-    Every claim, lookup, replay and stale reclaim is scoped to it, so two principals sharing a key
-    and endpoint can neither replay nor block each other (issue #337)."""
-    if not principal or not principal.strip():
-        raise ValueError("an idempotency claim requires a non-empty authenticated principal")
-    claimed_id = await _try_claim(db, principal=principal, key=key, endpoint=endpoint, request_hash=request_hash)
-    if claimed_id is not None:
-        claim = await db.get(IdempotencyKey, claimed_id)
-        assert claim is not None
-        return IdempotencyOutcome(claim=claim)
+    Every claim, lookup, replay, replacement and stale reclaim is scoped to it, so two principals sharing a
+    key and endpoint can neither replay nor block each other (issue #337). `ttl` is the lifetime given to
+    every claim generation this call starts (24 h for user endpoints; collector ingestion passes its own).
 
-    deadline = datetime.now(UTC) + timedelta(seconds=_POLL_MAX_WAIT_SECONDS)
+    Waiting is bounded by a monotonic deadline taken at entry: if the window is exhausted the caller gets
+    IdempotencyStillProcessing. If the claim this call just acquired was taken over before it could be loaded
+    (a pause between the claim statement's commit and the reload), IdempotencyClaimLost is raised: the caller
+    never owns a claim, so it must not release anything. The database can still make an individual statement wait (a lock holder,
+    the connection pool), which this deadline does not and cannot interrupt."""
+    _validate_principal(principal)
+    deadline = _monotonic() + _POLL_MAX_WAIT_SECONDS
+
+    acquired = await _try_claim(
+        db, principal=principal, key=key, endpoint=endpoint, request_hash=request_hash, ttl=ttl
+    )
+    if acquired is not None:
+        return IdempotencyOutcome(claim=await _load_claim(db, acquired))
+
     select_stmt = (
         select(IdempotencyKey)
         .where(
@@ -192,35 +304,32 @@ async def get_or_claim(
     )
     while True:
         record = (await db.execute(select_stmt)).scalar_one_or_none()
+        now = _now()
         if record is None:
-            # The prior claimant released it (its write failed) — try to claim it fresh.
-            claimed_id = await _try_claim(
-                db, principal=principal, key=key, endpoint=endpoint, request_hash=request_hash
+            # The prior claimant released it (its write failed) or a purge removed it: claim it fresh.
+            acquired = await _try_claim(
+                db, principal=principal, key=key, endpoint=endpoint, request_hash=request_hash, ttl=ttl
             )
-            if claimed_id is not None:
-                claim = await db.get(IdempotencyKey, claimed_id)
-                assert claim is not None
-                return IdempotencyOutcome(claim=claim)
-            continue
-
-        if record.request_hash != request_hash:
+            if acquired is not None:
+                return IdempotencyOutcome(claim=await _load_claim(db, acquired))
+        elif record.expires_at <= now:
+            # Inclusive boundary, evaluated BEFORE the hash comparison: an expired row is not a conflict.
+            acquired = await _try_replace_expired(db, record, request_hash=request_hash, now=now, ttl=ttl)
+            if acquired is not None:
+                return IdempotencyOutcome(claim=await _load_claim(db, acquired))
+        elif record.request_hash != request_hash:
             raise IdempotencyConflict()
-
-        if record.status == "completed":
+        elif record.status == "completed":
             return IdempotencyOutcome(cached=record)
+        elif now - record.updated_at > STALE_CLAIM_TIMEOUT:
+            acquired = await _try_reclaim_stale(db, record, ttl=ttl)
+            if acquired is not None:
+                return IdempotencyOutcome(claim=await _load_claim(db, acquired))
 
-        now = datetime.now(UTC)
-        if now - record.updated_at > STALE_CLAIM_TIMEOUT:
-            reclaimed_id = await _try_reclaim_stale(db, record)
-            if reclaimed_id is not None:
-                claim = await db.get(IdempotencyKey, reclaimed_id, populate_existing=True)
-                assert claim is not None
-                return IdempotencyOutcome(claim=claim)
-            continue  # someone else reclaimed it first; re-check its new state
-
-        if now > deadline:
+        # Every iteration that did not return passes through the deadline check, then the sleep: no
+        # failed replace/reclaim/insert can spin without bound.
+        if _monotonic() >= deadline:
             raise IdempotencyStillProcessing()
-
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
 
