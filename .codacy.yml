@@ -11,3 +11,17 @@ engines:
   tsqllint:
     exclude_paths:
       - "backend/scripts/diagnose_port_connection_conflicts.sql"
+  # `race` is re-exported in conftest.py solely so pytest fixture discovery can
+  # resolve it by name in sibling test modules (tests/api/test_equipment_instantiation.py
+  # uses it as a fixture parameter). It is never directly referenced in conftest.py
+  # code, so ruff (F401) and pylintpython3 (W0611) report it as an unused import.
+  # This is a demonstrated analyzer incompatibility: Codacy's static analyzers do not
+  # understand pytest fixtures registered via re-exported imports. Exclude only this
+  # file from these two engines; all other analysis (including tsqllint, bandit,
+  # safety, duplication) remains fully active on conftest.py and everywhere else.
+  ruff:
+    exclude_paths:
+      - "backend/tests/conftest.py"
+  pylintpython3:
+    exclude_paths:
+      - "backend/tests/conftest.py"
