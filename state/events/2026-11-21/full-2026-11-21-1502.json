@@ -1,0 +1,61 @@
+{
+  "run_id": "full-2026-11-21-1502",
+  "mode": "FULL",
+  "steps": [
+    [
+      "0",
+      "lease acquired; policy/changelog read; ruleset read"
+    ],
+    [
+      "1",
+      "5 open PRs and 20 non-PR issues enumerated; exact-head checks and reviews read"
+    ],
+    [
+      "2",
+      "exact-head independent review claims checked; no code-fix assertion accepted without diff"
+    ],
+    [
+      "3",
+      "priority #371 #370 #375 #363 #361"
+    ],
+    [
+      "4",
+      "no thread resolved without verified disposition"
+    ],
+    [
+      "4a",
+      "prior findings preserved; no unverified finding closed"
+    ],
+    [
+      "5",
+      "no duplicate asks; #370 Copilot missing; #371 unresolved thread; #363 behind; #361 draft"
+    ],
+    [
+      "6",
+      "no historical supersession closure supported by evidence"
+    ],
+    [
+      "7",
+      "no stale agent re-prompt sent without complete duplicate guard"
+    ],
+    [
+      "8",
+      "zero merges; #370 missing Copilot; #371 unresolved thread; #375 missing reviews; #363 behind; #361 draft"
+    ],
+    [
+      "9",
+      "no new class I decisions"
+    ],
+    [
+      "10",
+      "report prepared; migration 0057 hold intact"
+    ]
+  ],
+  "merged": [],
+  "actions": [],
+  "limitations": [
+    "review-thread full GraphQL resolution state not independently enumerated",
+    "no Copilot exact-head review observed in REST review submissions"
+  ],
+  "production_hold_0057": "intact"
+}
