@@ -379,6 +379,228 @@ async def test_rack_lifecycle_transition_still_works_in_scope(per_request_client
     assert ok.status_code == 200 and ok.json()["lifecycle_status"] == "installed"
 
 
+# ------------------------------------------------------- lifecycle lock order (AGY P2-1 on 9e534ae)
+# Lock order is AUTHORITY(S|X) -> placement(rack) -> row locks (authority_lock.py). `transition_lifecycle` once took the
+# managed_asset row FIRST. A child INSERT that references managed_asset.id (rack_placement.rack_id in move_rack,
+# user_group_rack_access.rack_id in set_site_access) takes FOR KEY SHARE on that row, which conflicts with FOR UPDATE,
+# while the writer holds the placement lock / AUTHORITY(X) the lifecycle request then waits for: a deadlock cycle.
+# The tests force both acquisition orders against both writers. Under the old order each fails: the parked-victim
+# tests because the writer blocks on the victim's row lock (TimeoutError), the lock-holder tests because the victim
+# waits on the row, not on the advisory lock the test polls for (TimeoutError). A hang is a failure, never a pass.
+LIFECYCLE_ACTION = "managed_asset.lifecycle_transition"
+
+
+def _lifecycle_url(rack_id: str) -> str:
+    return f"/api/v1/managed-assets/{rack_id}/lifecycle-transition"
+
+
+def _install_helper_pause(monkeypatch) -> Pause:
+    """Parks an ARMED, RESTRICTED lifecycle caller immediately BEFORE it takes the placement locks, once.
+
+    With the fixed order the parked request holds no lock at all. With the old order it would already hold the
+    managed_asset row lock here, which is what makes the writers below block."""
+    original = managed_assets_module.lock_rack_placement_and_recheck_scope
+    pause = Pause()
+
+    async def _wrapped(db, scope, rack_id):
+        if pause.armed and not pause.fired and not scope.unrestricted:
+            pause.fired += 1
+            pause.reached.set()
+            await asyncio.wait_for(pause.release.wait(), BLOCK_TIMEOUT_S * 2)
+        await original(db, scope, rack_id)
+
+    monkeypatch.setattr(managed_assets_module, "lock_rack_placement_and_recheck_scope", _wrapped)
+    return pause
+
+
+async def _lifecycle_state(db_engine, rack_id: str) -> tuple:
+    rack = uuid.UUID(rack_id)
+    async with db_engine.connect() as conn:
+        status = (await conn.execute(text("SELECT lifecycle_status FROM managed_asset WHERE id = :r"), {"r": rack})).scalar_one()
+        audits = (await conn.execute(
+            text("SELECT count(*) FROM audit_log WHERE entity_id = :r AND action = :a"), {"r": rack, "a": LIFECYCLE_ACTION})).scalar_one()
+        events = (await conn.execute(
+            text("SELECT count(*) FROM outbox_event WHERE aggregate_id = :r AND event_type = 'ManagedAssetLifecycleChanged'"), {"r": rack})).scalar_one()
+    return status, audits, events
+
+
+async def _current_room(db_engine, rack_id: str) -> str:
+    async with db_engine.connect() as conn:
+        return str((await conn.execute(
+            text("SELECT room_id FROM rack_placement WHERE rack_id = :r AND effective_to IS NULL"), {"r": uuid.UUID(rack_id)})).scalar_one())
+
+
+@pytest.mark.parametrize("target, expected", [("room_b", 404), ("room_a2", 200)])
+async def test_lifecycle_parked_before_the_placement_locks_does_not_block_or_deadlock_a_rack_move(
+    per_request_client, client, monkeypatch, world, db_engine, target, expected
+):
+    """Order 1: the lifecycle request is in flight but not yet locked; the mover commits first, then the victim resumes.
+
+    The mover must finish while the victim is parked. Cross-site, the resumed victim is denied (404); same-site it
+    proceeds (200) and serialises behind the committed move."""
+    _lifecycle_scope_aware(monkeypatch)
+    headers = await _lifecycle_operator(client, world)
+    pause = _install_helper_pause(monkeypatch)
+    before = await _lifecycle_state(db_engine, world["rack"])
+    pause.arm()
+    victim = asyncio.create_task(per_request_client.post(_lifecycle_url(world["rack"]), json={"to_status": "installed"}, headers=headers))
+    try:
+        await asyncio.wait_for(pause.reached.wait(), BLOCK_TIMEOUT_S)
+        # A hang here would mean the victim already holds the managed_asset row lock and blocks the move's FK check.
+        mover = await asyncio.wait_for(_admin_move(per_request_client, world, world[target]), BLOCK_TIMEOUT_S)
+        assert mover.status_code == 200, mover.text
+    finally:
+        pause.release.set()
+    resp = await asyncio.wait_for(victim, BLOCK_TIMEOUT_S)
+    assert pause.fired == 1
+    assert resp.status_code == expected, resp.text  # never a 500 from SQLSTATE 40P01
+    assert await _current_room(db_engine, world["rack"]) == world[target]
+    state = await _lifecycle_state(db_engine, world["rack"])
+    if expected == 404:
+        assert state == before == ("planned", 0, 0)  # denied: no status change, no audit, no outbox event
+        assert "version" not in resp.text.lower()
+    else:
+        assert state == ("installed", 1, 1)
+
+
+@pytest.mark.parametrize("target, expected", [("room_b", 404), ("room_a2", 200)])
+async def test_lifecycle_waits_for_an_uncommitted_rack_move_then_serialises(
+    per_request_client, client, monkeypatch, world, db_engine, target, expected
+):
+    """Order 2: the mover is first and uncommitted: it holds AUTHORITY(S), the placement lock and the FK key-share lock.
+
+    The victim must wait on the ADVISORY lock (observable in pg_stat_activity), not on the row, and must decide only
+    after the commit: 404 when the rack left its site, 200 (serialised) when it stayed."""
+    _lifecycle_scope_aware(monkeypatch)
+    headers = await _lifecycle_operator(client, world)
+    before = await _lifecycle_state(db_engine, world["rack"])
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as holder:
+        await move_rack(holder, rack_id=uuid.UUID(world["rack"]), room_id=uuid.UUID(world[target]))
+        victim = asyncio.create_task(per_request_client.post(_lifecycle_url(world["rack"]), json={"to_status": "installed"}, headers=headers))
+        await _wait_until_blocked(db_engine)
+        assert not victim.done(), "the lifecycle request must wait for the in-flight move"
+        await holder.commit()
+    resp = await asyncio.wait_for(victim, BLOCK_TIMEOUT_S)
+    assert resp.status_code == expected, resp.text
+    state = await _lifecycle_state(db_engine, world["rack"])
+    assert state == (before if expected == 404 else ("installed", 1, 1))
+    assert await _current_room(db_engine, world["rack"]) == world[target]
+
+
+def _grant_rack_to(world) -> dict:
+    return {"sites": [{"site_id": world["site_a"]["site"], "rack_scope": "selected", "rack_ids": [world["rack"]]}]}
+
+
+async def _rack_grants(db_engine, group_id: str, rack_id: str) -> int:
+    async with db_engine.connect() as conn:
+        return (await conn.execute(text(
+            "SELECT count(*) FROM user_group_rack_access r JOIN user_group_site_access s ON s.id = r.site_access_id "
+            "WHERE s.group_id = :g AND r.rack_id = :r"), {"g": uuid.UUID(group_id), "r": uuid.UUID(rack_id)})).scalar_one()
+
+
+async def test_lifecycle_parked_before_the_placement_locks_does_not_block_or_deadlock_a_group_site_access_change(
+    per_request_client, client, monkeypatch, world, db_engine
+):
+    """Order 1 against `PUT /groups/{id}/site-access` (AUTHORITY(X) then an INSERT into user_group_rack_access)."""
+    _lifecycle_scope_aware(monkeypatch)
+    headers = await _lifecycle_operator(client, world)
+    other = await _group(client, world["admin"], allow=["rack:read"])  # not the victim's group: its scope is unchanged
+    pause = _install_helper_pause(monkeypatch)
+    pause.arm()
+    victim = asyncio.create_task(per_request_client.post(_lifecycle_url(world["rack"]), json={"to_status": "installed"}, headers=headers))
+    try:
+        await asyncio.wait_for(pause.reached.wait(), BLOCK_TIMEOUT_S)
+        changed = await asyncio.wait_for(per_request_client.put(
+            f"/api/v1/groups/{other}/site-access", json=_grant_rack_to(world), headers=world["admin"]), BLOCK_TIMEOUT_S)
+        assert changed.status_code == 200, changed.text
+    finally:
+        pause.release.set()
+    resp = await asyncio.wait_for(victim, BLOCK_TIMEOUT_S)
+    assert resp.status_code == 200, resp.text  # still authorised: only another group's grants changed
+    assert await _lifecycle_state(db_engine, world["rack"]) == ("installed", 1, 1)
+    assert await _rack_grants(db_engine, other, world["rack"]) == 1
+    assert await _current_room(db_engine, world["rack"]) == world["room_a"]
+
+
+async def test_lifecycle_waits_for_an_uncommitted_group_site_access_change_then_serialises(
+    per_request_client, client, monkeypatch, world, db_engine
+):
+    """Order 2: an uncommitted authority change holds AUTHORITY(X) and the FK key-share lock on the rack's asset row.
+
+    The victim must wait on the advisory lock (AUTHORITY(S) behind AUTHORITY(X)), not on the row, then succeed."""
+    from app.application.authority_lock import acquire_authority_lock
+    from app.domain.auth.models import UserGroupRackAccess, UserGroupSiteAccess
+
+    _lifecycle_scope_aware(monkeypatch)
+    headers = await _lifecycle_operator(client, world)
+    other = await _group(client, world["admin"], allow=["rack:read"])
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as holder:
+        await acquire_authority_lock(holder)
+        access = UserGroupSiteAccess(group_id=uuid.UUID(other), site_id=uuid.UUID(world["site_a"]["site"]), rack_scope="selected")
+        holder.add(access)
+        await holder.flush()
+        holder.add(UserGroupRackAccess(site_access_id=access.id, rack_id=uuid.UUID(world["rack"])))
+        await holder.flush()  # the FK check takes FOR KEY SHARE on the rack's managed_asset row
+        victim = asyncio.create_task(per_request_client.post(_lifecycle_url(world["rack"]), json={"to_status": "installed"}, headers=headers))
+        await _wait_until_blocked(db_engine)
+        assert not victim.done(), "the lifecycle request must wait for the in-flight authority change"
+        await holder.commit()
+    resp = await asyncio.wait_for(victim, BLOCK_TIMEOUT_S)
+    assert resp.status_code == 200, resp.text
+    assert await _lifecycle_state(db_engine, world["rack"]) == ("installed", 1, 1)
+    assert await _rack_grants(db_engine, other, world["rack"]) == 1
+
+
+def _is_deadlock(exc: BaseException) -> bool:
+    return "deadlock detected" in str(exc).lower() or getattr(getattr(exc, "orig", None), "pgcode", None) == "40P01"
+
+
+async def _wait_until_row_blocked(db_engine) -> None:
+    """Condition-based wait: a backend is observably blocked on a ROW/transaction lock (not an advisory one)."""
+    async def _poll():
+        while True:
+            async with db_engine.connect() as conn:
+                n = (await conn.execute(text(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                    "AND wait_event_type = 'Lock' AND wait_event <> 'advisory'"))).scalar_one()
+            if n:
+                return
+            await asyncio.sleep(0.02)
+
+    await asyncio.wait_for(_poll(), BLOCK_TIMEOUT_S)
+
+
+async def test_the_old_row_lock_first_order_deadlocks_against_a_placement_writer_on_this_schema(world, db_engine):
+    """Regression sensitivity (hazard characterisation, not a mutation run of the production code).
+
+    Emulates the previous lifecycle order (managed_asset row FOR UPDATE, then the placement lock) against the real
+    placement writer (`move_rack`: AUTHORITY(S) -> placement lock -> child INSERT). PostgreSQL must abort exactly one
+    of them with 40P01. That shows the cycle is real on this schema and that the tests above, which would hang or
+    error under the old order, are sensitive to it."""
+    rack = uuid.UUID(world["rack"])
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+
+    async def _guard(session, coro):
+        try:
+            return await coro
+        except Exception as exc:  # the aborted side must roll back so the survivor can finish
+            await session.rollback()
+            return exc
+
+    async with factory() as old_order, factory() as mover:
+        await old_order.execute(text("SELECT id FROM managed_asset WHERE id = :r FOR UPDATE"), {"r": rack})
+        mover_task = asyncio.create_task(_guard(mover, move_rack(mover, rack_id=rack, room_id=uuid.UUID(world["room_a2"]))))
+        await _wait_until_row_blocked(db_engine)  # the mover holds the placement lock and waits for the row
+        old_task = asyncio.create_task(_guard(old_order, old_order.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"), {"k": f"dcim.placement.rack.{rack}"})))
+        results = await asyncio.wait_for(asyncio.gather(mover_task, old_task), BLOCK_TIMEOUT_S)
+        failures = [r for r in results if isinstance(r, Exception)]
+        assert len(failures) == 1 and _is_deadlock(failures[0]), results
+        await old_order.rollback()
+        await mover.rollback()
+
 # ------------------------------------------------------------------ floor-plan candidate accept (AGY P2 / P3)
 from app.application.catalog_documents.extraction.sandbox import landlock_available  # noqa: E402
 
