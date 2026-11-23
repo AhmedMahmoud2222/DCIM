@@ -11,7 +11,7 @@
     "claude": {"id": 209825114, "login": "claude[bot]", "app_id": 1236702, "app_slug": "claude"}
   },
   "reviewer": "claude",
-  "review_action": "anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed",
+  "review_action": "anthropics/claude-code-action@c84e279f859e2591391e95bd309286eb111c345f",
   "owner_environment": "acceptance-owner",
   "workflows": {
     "review": {"path": ".github/workflows/acceptance-review.yml", "event": "issue_comment", "jobs": ["prepare", "review", "seal"]},
