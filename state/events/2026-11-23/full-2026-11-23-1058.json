@@ -1,0 +1,61 @@
+{
+  "run_id": "full-2026-11-23-1058",
+  "mode": "FULL",
+  "started_at": "2026-11-23T06:58:00Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy and changelog read; ruleset checked; all bypass pull_request"
+    },
+    {
+      "step": 1,
+      "result": "3 open PRs (#375,#371,#363), 19 standalone open issues; #361 merged since last index"
+    },
+    {
+      "step": 2,
+      "result": "Reviewed current PR patches and review comments; no unsupported fix claims accepted"
+    },
+    {
+      "step": 3,
+      "result": "Security workflow #363 and endpoint integrity #371 prioritized; #375 excluded A5"
+    },
+    {
+      "step": 4,
+      "result": "No thread resolved; security findings require independent disposition"
+    },
+    {
+      "step": "4a",
+      "result": "Prior findings retained; no new fix round credited"
+    },
+    {
+      "step": 5,
+      "result": "#371 Copilot quota blocks Tier 2; #375 workflow publisher anthropics excluded A5; #363 workflow permission/secret owner gate"
+    },
+    {
+      "step": 6,
+      "result": "No superseded PR closure authorized by evidence"
+    },
+    {
+      "step": 7,
+      "result": "No stale agent re-prompt sent without complete freshness verification"
+    },
+    {
+      "step": 8,
+      "result": "No merge: Tier 2 acceptance and/or owner authorization absent; main changed with #361"
+    },
+    {
+      "step": 9,
+      "result": "No new class I authorization issued; existing workflow/secret owner requirement maintained"
+    },
+    {
+      "step": 10,
+      "result": "Report produced; migration 0057 hold maintained"
+    }
+  ],
+  "merged": [],
+  "comments": [],
+  "errors": [],
+  "main_sha": "1fd37e0c3fca8556b76cc82d13ab8c043515ead8",
+  "ruleset": "23651422",
+  "production_migration_0057": "HOLD"
+}
