@@ -1,0 +1,21 @@
+{
+  "run_id": "full-2026-11-23-1555",
+  "mode": "FULL",
+  "started_at": "2026-11-23T15:55:42Z",
+  "steps": [
+    "0 lease acquired; policy and changelog read; ruleset unchanged, all bypass pull_request",
+    "1 three open PRs #371 #363 #375 and 19 open issues; #371 head refreshed 17364f77a8bb",
+    "2 exact-head required checks #371 #363 #375 green; no exact-head independent review #371",
+    "3 prioritized #371 then #363 then #375; security workflow changes held",
+    "4 unresolved threads not safely resolvable with verified dispositions; none resolved",
+    "4a earlier findings retained; no evidence to clear all",
+    "5 #371 awaits fresh Codex and Copilot after new head; #363 behind and open threads; #375 optional deployment tooling failure and workflow authorization",
+    "6 no historical supersession closure",
+    "7 no duplicate agent asks posted",
+    "8 no merge: exact-head reviews missing and/or threads/owner permissions",
+    "9 no new class I decision created",
+    "10 report prepared; migration 0057 hold intact"
+  ],
+  "merges": [],
+  "safety": "Migration 0057 production execution prohibited"
+}
