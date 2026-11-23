@@ -271,6 +271,21 @@ jobs:
         # below so no shard selects them again.
         if: matrix.shard == 0
         run: pytest -q tests/integration/test_bulk_import_real_beat_recovery.py tests/integration/test_bulk_import_real_two_worker_fencing.py tests/integration/test_bulk_import_real_worker_recovery.py
+      - name: Run the DB-26 rack authorization race tests verbosely (evidence step)
+        # Additive evidence for #360/PR #361 and not a gate replacement: the file also runs in its
+        # regular shard. `-v -rs` records every test name and the reason for any skip (two tests
+        # need the Landlock-sandboxed floor-plan parser) in the log and the job summary, which the
+        # quiet shard runs cannot show. It runs on this job's disposable PostgreSQL service.
+        if: matrix.shard == 0
+        run: |
+          set -o pipefail
+          pytest -v -rs tests/api/test_rack_authz_race_db26.py | tee "$RUNNER_TEMP/db26.txt"
+          {
+            echo '### DB-26 rack authorization race tests (pytest -v -rs)'
+            echo '```'
+            grep -E "PASSED|FAILED|SKIPPED|ERROR|passed|skipped|failed" "$RUNNER_TEMP/db26.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Run this shard of the regression tests
         # Same selection as backend-runtime-shards: ci_shard.py exits non-zero on an empty
         # selection, and the preloaded files run in shard 0's own steps above.

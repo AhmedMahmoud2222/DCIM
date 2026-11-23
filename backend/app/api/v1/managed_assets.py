@@ -35,6 +35,7 @@ from app.application.idempotency import (
 )
 from app.application.lifecycle_settings import get_configured_allowed_transitions
 from app.application.outbox_service import write_outbox_event
+from app.application.placement_service import lock_rack_placement_and_recheck_scope
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.audit.models import AuditLog
@@ -252,11 +253,23 @@ async def transition_lifecycle(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("managed_asset:update_lifecycle")),
 ) -> ManagedAsset:
-    # Preliminary scope check before acquiring a row lock so unauthorized callers
-    # fail closed immediately without contending on locks.
-    await _load_accessible_managed_asset(db, ctx.scope, asset_id)
-    # Lock the row, then re-verify scope in case a concurrent placement change
-    # moved the asset out of scope before the lock was acquired.
+    # Preliminary scope check before acquiring any lock so unauthorized callers fail closed immediately without
+    # contending on locks. It also establishes the asset's type, which is set at creation and never changes.
+    preliminary = await _load_accessible_managed_asset(db, ctx.scope, asset_id)
+    if preliminary.asset_type == "rack":
+        # DB-26 (#360): a rack's site scope is its CURRENT placement, which a concurrent move can change after the
+        # check above. Take the placement writers' locks and re-check before any write (same uniform 404).
+        #
+        # Lock order is AUTHORITY(S) -> placement(rack) -> managed_asset row: row locks come LAST
+        # (authority_lock.py). The row lock must not be taken first. A child INSERT whose FK references
+        # managed_asset.id (rack_placement.rack_id in move_rack, user_group_rack_access.rack_id in set_site_access)
+        # takes FOR KEY SHARE on that row, which conflicts with FOR UPDATE, while the writer already holds the
+        # placement lock / AUTHORITY(X) this request would then wait for: a deadlock cycle (SQLSTATE 40P01).
+        try:
+            await lock_rack_placement_and_recheck_scope(db, ctx.scope, asset_id)
+        except NotFoundError:
+            raise NotFoundError(f"ManagedAsset {asset_id} not found.") from None
+    # Now lock the row and re-verify scope (the asset may have been deleted or, for other asset types, moved).
     asset = (
         await db.execute(
             select(ManagedAsset).where(ManagedAsset.id == asset_id).with_for_update().execution_options(populate_existing=True)
