@@ -36,6 +36,11 @@ from app.db.session import get_db  # noqa: E402
 from app.domain.auth.models import RoleAssignment, User  # noqa: E402
 from app.main import app  # noqa: E402
 
+# Re-exported for test modules that need the PostgreSQL concurrency `race` fixture.
+# Defined in tests/integration/test_atomic_optimistic_concurrency.py; imported here
+# so pytest fixture discovery can resolve it by name in sibling test modules.
+from tests.integration.test_atomic_optimistic_concurrency import race  # noqa: F401,E402
+
 TEST_DATABASE_URL = os.environ["DATABASE_URL"]
 TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 
