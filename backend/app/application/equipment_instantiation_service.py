@@ -33,11 +33,11 @@ already-instantiated Equipment's ports/inlets — only `instantiate_equipment` (
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.network.topology_lock import acquire_topology_lock
-from app.core.errors import NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.domain.catalog.designer_models import (
     CatalogModel,
     CatalogModelRevision,
@@ -284,6 +284,70 @@ async def connect_port(
             raise PortNotFound(f"PowerNode {target_power_node_id} not found.")
         if node.node_type != "pdu_outlet":
             raise InvalidPortTarget(f"PowerNode {target_power_node_id} is not a pdu_outlet (got {node.node_type!r}).")
+
+    if target_port_id is not None:
+        # Complete endpoint-occupancy check: a port may participate in at most one logical
+        # connection, either as source or target. A port may not be reused merely because
+        # its role switches between source and target (e.g. A->B then B->C, or A->B then
+        # C->A). A reconnect by this same source replaces its own row and is allowed, so
+        # that row is excluded from the occupancy check. The topology lock held at the top
+        # of this function serialises this check with every other topology writer (cable
+        # creation, neighbour confirmation), so the check-and-write is race-free and no
+        # partial mutation can persist when this is rejected.
+        occupied = (
+            await db.execute(
+                select(PortConnection.id)
+                .where(
+                    or_(
+                        # Source port already occupied as a destination by another connection.
+                        and_(
+                            PortConnection.target_port_id == source_port_id,
+                            PortConnection.source_port_id != source_port_id,
+                        ),
+                        # Target port already occupied as a destination by another source.
+                        and_(
+                            PortConnection.target_port_id == target_port_id,
+                            PortConnection.source_port_id != source_port_id,
+                        ),
+                        # Target port already occupied as a source of another connection.
+                        PortConnection.source_port_id == target_port_id,
+                    )
+                )
+                .with_for_update()
+            )
+        ).first()
+        if occupied is not None:
+            raise ConflictError(
+                "One or both ports are already occupied in another logical connection. "
+                "Disconnect the existing link first."
+            )
+    else:
+        # Power-node relationship (target_port_id is None). Endpoint exclusivity still
+        # applies: the source port must not already be the destination of another logical
+        # connection. A->B then B->PDU reuses B as a source after B was a target, which
+        # the invariant forbids. The reverse (B->PDU then A->B) is rejected by the
+        # port-to-port check above on the second call (B is already a source via its
+        # power-node row, caught by "target port occupied as a source"). A reconnect by
+        # this same source replaces its own row and is handled by the `existing` path
+        # below, so no same-source exclusion is needed here: source_port_id is unique,
+        # so the only row with source_port_id == source_port_id is this source's own.
+        occupied_as_target = (
+            await db.execute(
+                select(PortConnection.id)
+                .where(
+                    and_(
+                        PortConnection.target_port_id == source_port_id,
+                        PortConnection.source_port_id != source_port_id,
+                    )
+                )
+                .with_for_update()
+            )
+        ).first()
+        if occupied_as_target is not None:
+            raise ConflictError(
+                "This port is already occupied as a destination in another logical connection. "
+                "Disconnect the existing link first."
+            )
 
     existing = (
         await db.execute(
