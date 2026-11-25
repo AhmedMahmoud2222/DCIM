@@ -23,7 +23,7 @@ from orchestration_provenance import verified_commit, execution_policy
 POLICY = '.github/agents/collaboration-policy.json'
 WORKFLOW = '.github/workflows/agent-claude.yml'
 SCRIPT = '.github/scripts/orchestration_claude_adapter.py'
-ACTION = 'anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed'
+ACTION = 'anthropics/claude-code-action@c84e279f859e2591391e95bd309286eb111c345f'
 CLAUDE = dict(id=209825114, login='claude[bot]', app_id=1236702, app_slug='claude')
 
 
