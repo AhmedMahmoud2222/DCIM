@@ -29,6 +29,7 @@ variables are configured by this PR.
 
 ## Other drafts
 
+- [agy.yml](agy.yml): inert 3-job `issue_comment` PR review workflow (`gate` -> `review` -> `seal`) for `/agy` and `@agy`, supporting human ID allowlists + bounded trusted bot identities, headless `GEMINI_API_KEY` or GCP ADC auth, read-only sandboxed execution, and deterministic `AGENTS.md` review formatting.
 - `claude.yml`: secret-free `prepare` job requires OWNER/MEMBER/COLLABORATOR association and validates a default-empty exact `CLAUDE_ALLOWED_BOTS`; `claude` job needs it.
 - `claude-code-review.yml`: same-repo PR gate and default-empty exact bot allowlist (`CLAUDE_REVIEW_ALLOWED_BOTS`).
 
@@ -42,4 +43,5 @@ variables are configured by this PR.
 
 1. Copy the accepted draft over the matching `.github/workflows/` file in a PR you author.
 2. For refresh: create variable `REFRESH_ALLOWED_ACTORS` (JSON array) and secret `REFRESH_PAT`; optionally an environment-scoped secret.
-3. After merge, run `/refresh-branch <sha>` on a throwaway same-repo PR and confirm `backend`/`frontend` start on the new head. Also test a denied actor, a non-main-base PR, a stale SHA, and an unset variable.
+3. For `agy`: create variable `AGY_ALLOWED_ACTOR_IDS` (JSON array of integer user IDs, e.g. `[285010264]`) and secret `GEMINI_API_KEY` (or configure GCP OIDC/ADC with `AGY_AUTH_MODE=adc`); optionally set `AGY_TRUSTED_BOT_IDENTITIES` for cloud bots, and `AGY_APP_CLIENT_ID` / `AGY_APP_SLUG` / `AGY_APP_PRIVATE_KEY` for a dedicated GitHub App identity.
+4. After merge, run `/refresh-branch <sha>` (or `/agy probe` / `@agy review`) on a throwaway same-repo PR and confirm expected gate, sandbox, and output behavior. Also test a denied actor, a non-main-base/fork PR, a stale SHA, and an unset variable.
